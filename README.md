@@ -1,9 +1,16 @@
 # LDI Pension Hedging Analyzer
 
+Live Demo:
+https://ldi-pension-frontend.onrender.com
+
+API Documentation:
+https://ldi-pension-hedging-analyzer.onrender.com/docs
+
 ## Overview
 
 A quantitative analytics platform for pension liability valuation,
-interest-rate hedging, and scenario analysis.
+interest-rate hedging, funding-ratio monitoring, and stochastic
+interest-rate scenario analysis.
 
 The project is designed as an interview-ready LDI analytics prototype: the core
 finance logic is implemented in clean Python model classes, exposed through a
@@ -96,6 +103,7 @@ ldi-pension-analyzer/
 │   ├── Dockerfile
 │   ├── app.py
 │   └── pages/
+│       ├── 1_Liability_Analysis.py
 │       ├── 2_Hedge_Optimizer.py
 │       ├── 3_Scenario_Analysis.py
 │       └── 4_Funding_Status.py
@@ -433,10 +441,21 @@ r[t+1] = r[t] + kappa * (theta - r[t]) * dt + sigma * sqrt(dt) * Z
 
 ## Frontend Pages
 
-### Main Dashboard
+### Landing Page
 
 ```text
 frontend/app.py
+```
+
+Features:
+
+- Project title
+- Sidebar page selection prompt
+
+### Liability Analysis
+
+```text
+frontend/pages/1_Liability_Analysis.py
 ```
 
 Features:
@@ -489,6 +508,26 @@ Features:
 - Computes Liability PV, Funding Ratio, Surplus / Deficit, and Liability DV01
 - Color-coded Funding Ratio metric
 - Asset-versus-liability and surplus/deficit bar charts
+
+---
+
+## Screenshots
+
+### Liability Analysis
+
+![Liability](docs/liability.png)
+
+### Hedge Optimizer
+
+![Hedge](docs/hedge.png)
+
+### Scenario Analysis
+
+![Scenario](docs/scenario.png)
+
+### Funding Status
+
+![Funding](docs/funding.png)
 
 ---
 
