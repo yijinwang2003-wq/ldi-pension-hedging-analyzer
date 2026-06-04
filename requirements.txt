@@ -1,5 +1,8 @@
 fastapi
+numpy
 pandas
 plotly
+pytest
 requests
 streamlit
+uvicorn

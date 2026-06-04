@@ -2,23 +2,16 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-import sys
+import os
 
 import numpy as np
 import pandas as pd
 import plotly.express as px
+import requests
 import streamlit as st
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
-
-from backend.models.scenarios import VasicekModel
-
-
+API_BASE_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:8000/api")
 TIME_STEP = 0.25
 MAX_DISPLAY_PATHS = 25
 
@@ -106,21 +99,33 @@ def run_scenario_analysis(
     years: float,
     n_paths: int,
 ) -> None:
-    """Simulate Vasicek paths and render charts plus terminal-rate metrics."""
+    """Call the backend Vasicek endpoint and render scenario analytics."""
+    payload = {
+        "kappa": kappa,
+        "theta": theta,
+        "sigma": sigma,
+        "r0": r0,
+        "years": years,
+        "dt": TIME_STEP,
+        "n_paths": n_paths,
+    }
+
     try:
-        model = VasicekModel(kappa=kappa, theta=theta, sigma=sigma, r0=r0)
-        paths = model.simulate_paths(
-            years=years,
-            dt=TIME_STEP,
-            n_paths=n_paths,
+        response = requests.post(
+            f"{API_BASE_URL}/scenarios/vasicek",
+            json=payload,
+            timeout=10,
         )
-        summary = model.summarize_terminal_rates()
-    except (TypeError, ValueError) as exc:
+        response.raise_for_status()
+    except requests.RequestException as exc:
         st.error(f"Unable to generate scenarios: {exc}")
         return
 
+    result = response.json()
+    paths = np.array(result["paths"], dtype=float)
+    terminal_rates = np.array(result["terminal_rates"], dtype=float)
+    summary = result["summary"]
     time_grid = np.arange(paths.shape[1]) * TIME_STEP
-    terminal_rates = paths[:, -1]
 
     st.header("Sample Paths Chart")
     render_sample_paths_chart(paths=paths, time_grid=time_grid)

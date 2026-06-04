@@ -2,20 +2,15 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-import sys
+import os
 
 import pandas as pd
 import plotly.express as px
+import requests
 import streamlit as st
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
-
-from backend.models.hedging import InterestRateSwap
+API_BASE_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:8000/api")
 
 
 def main() -> None:
@@ -84,25 +79,32 @@ def calculate_hedge(
     fixed_rate: float,
     maturity_years: int,
 ) -> None:
-    """Calculate swap DV01, hedge notional, and residual DV01 risk."""
-    discount_curve = build_flat_discount_curve(
-        rate=fixed_rate,
-        maturity_years=maturity_years,
-    )
+    """Call the backend hedge endpoint and display hedge analytics."""
+    payload = {
+        "notional": swap_notional,
+        "fixed_rate": fixed_rate,
+        "maturity_years": maturity_years,
+        "discount_curve": build_flat_discount_curve(
+            rate=fixed_rate,
+            maturity_years=maturity_years,
+        ),
+        "liability_dv01": liability_dv01,
+    }
 
     try:
-        swap = InterestRateSwap(
-            notional=swap_notional,
-            fixed_rate=fixed_rate,
-            maturity_years=maturity_years,
-            discount_curve=discount_curve,
+        response = requests.post(
+            f"{API_BASE_URL}/hedging/hedge-notional",
+            json=payload,
+            timeout=10,
         )
-        swap_dv01 = swap.dv01()
-        hedge_notional = swap.hedge_notional(liability_dv01)
-    except (TypeError, ValueError) as exc:
+        response.raise_for_status()
+    except requests.RequestException as exc:
         st.error(f"Unable to calculate hedge: {exc}")
         return
 
+    result = response.json()
+    swap_dv01 = result["swap_dv01"]
+    hedge_notional = result["hedge_notional"]
     hedge_dv01 = hedge_notional / swap_notional * swap_dv01
     before_hedge_risk = liability_dv01
     after_hedge_risk = liability_dv01 - hedge_dv01
