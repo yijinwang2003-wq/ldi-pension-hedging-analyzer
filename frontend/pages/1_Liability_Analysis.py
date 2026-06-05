@@ -11,6 +11,7 @@ import streamlit as st
 
 
 API_BASE_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:8000/api")
+KEY_RATES = [5, 10, 20, 30]
 
 
 def main() -> None:
@@ -89,6 +90,13 @@ def calculate_liability_analytics(
         present_value = post_liability_endpoint("pv", payload)
         duration = post_liability_endpoint("duration", payload)
         dv01 = post_liability_endpoint("dv01", payload)
+        key_rate_dv01 = post_liability_endpoint(
+            "key-rate-dv01",
+            {
+                **payload,
+                "key_rates": KEY_RATES,
+            },
+        )
     except requests.RequestException as exc:
         st.error(f"Unable to calculate liability analytics: {exc}")
         return
@@ -99,11 +107,12 @@ def calculate_liability_analytics(
         modified_duration=duration["modified_duration"],
         dv01=dv01["dv01"],
     )
+    render_key_rate_dv01_analysis(key_rate_dv01["key_rate_dv01"])
 
 
 def post_liability_endpoint(
     endpoint: str,
-    payload: dict[str, dict[int, float]],
+    payload: dict[str, object],
 ) -> dict[str, float]:
     """POST a liability payload to an API endpoint and return JSON data."""
     response = requests.post(
@@ -127,6 +136,44 @@ def render_liability_metrics(
     columns[1].metric("Macaulay Duration", f"{macaulay_duration:.2f}")
     columns[2].metric("Modified Duration", f"{modified_duration:.2f}")
     columns[3].metric("DV01", f"${dv01:,.2f}")
+
+
+def render_key_rate_dv01_analysis(key_rate_dv01: dict[str, float]) -> None:
+    """Render key-rate DV01 metrics, chart, and hedge guidance."""
+    st.header("Key-Rate DV01 Analysis")
+
+    normalized_dv01 = {
+        key_rate: float(key_rate_dv01.get(str(key_rate), 0.0))
+        for key_rate in KEY_RATES
+    }
+
+    columns = st.columns(4)
+    for column, key_rate in zip(columns, KEY_RATES):
+        column.metric(f"{key_rate}Y DV01", f"${normalized_dv01[key_rate]:,.2f}")
+
+    chart_df = pd.DataFrame(
+        {
+            "Key Rate": [f"{key_rate}Y" for key_rate in KEY_RATES],
+            "DV01": [normalized_dv01[key_rate] for key_rate in KEY_RATES],
+        }
+    )
+    fig = px.bar(
+        chart_df,
+        x="Key Rate",
+        y="DV01",
+        labels={"DV01": "DV01"},
+    )
+    fig.update_layout(yaxis_tickprefix="$", yaxis_tickformat=",.2f")
+    st.plotly_chart(fig, use_container_width=True)
+
+    largest_key_rate = max(
+        normalized_dv01,
+        key=lambda key_rate: abs(normalized_dv01[key_rate]),
+    )
+    st.info(
+        f"Largest exposure is at the {largest_key_rate}Y maturity bucket. "
+        "Consider IRS or long-duration fixed income exposure around this tenor."
+    )
 
 
 def render_cash_flow_chart(cash_flow_df: pd.DataFrame) -> None:

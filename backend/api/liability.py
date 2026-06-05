@@ -26,6 +26,16 @@ class LiabilityRequest(BaseModel):
     )
 
 
+class KeyRateDV01Request(LiabilityRequest):
+    """Request payload for key-rate DV01 analytics."""
+
+    key_rates: list[int] = Field(
+        ...,
+        description="Selected maturity points for key-rate DV01 shocks.",
+        example=[5, 10, 20, 30],
+    )
+
+
 class PresentValueResponse(BaseModel):
     """Response payload for present value analytics."""
 
@@ -43,6 +53,12 @@ class DV01Response(BaseModel):
     """Response payload for DV01 analytics."""
 
     dv01: float
+
+
+class KeyRateDV01Response(BaseModel):
+    """Response payload for key-rate DV01 analytics."""
+
+    key_rate_dv01: dict[int, float]
 
 
 @router.post("/pv", response_model=PresentValueResponse)
@@ -72,6 +88,20 @@ def calculate_dv01(request: LiabilityRequest) -> DV01Response:
     return DV01Response(dv01=model.dv01())
 
 
+@router.post("/key-rate-dv01", response_model=KeyRateDV01Response)
+def calculate_key_rate_dv01(
+    request: KeyRateDV01Request,
+) -> KeyRateDV01Response:
+    """Calculate liability key-rate DV01 for selected maturity points."""
+    model = _build_liability_model(request)
+    try:
+        return KeyRateDV01Response(
+            key_rate_dv01=model.key_rate_dv01(request.key_rates)
+        )
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 def _build_liability_model(request: LiabilityRequest) -> LiabilityModel:
     """Create a liability model and map domain validation errors to HTTP 400."""
     try:
@@ -79,5 +109,5 @@ def _build_liability_model(request: LiabilityRequest) -> LiabilityModel:
             cash_flows=request.cash_flows,
             discount_curve=request.discount_curve,
         )
-    except ValueError as exc:
+    except (TypeError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

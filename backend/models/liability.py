@@ -119,6 +119,48 @@ class LiabilityModel:
             for year, cash_flow in self.cash_flows.items()
         )
 
+    def key_rate_dv01(self, key_rates: list[int]) -> dict[int, float]:
+        """Return key-rate DV01 for selected maturity points.
+
+        For each key rate, only that discount-curve maturity is shifted up and
+        down by one basis point. Missing key rates return ``0.0`` because they
+        do not affect the current curve representation.
+
+        Parameters
+        ----------
+        key_rates:
+            Maturity points to shock, expressed as positive integer years.
+
+        Returns
+        -------
+        dict[int, float]
+            Mapping from key-rate year to key-rate DV01.
+        """
+        key_rate_dv01s: dict[int, float] = {}
+
+        for key_rate in key_rates:
+            if key_rate not in self.discount_curve:
+                key_rate_dv01s[key_rate] = 0.0
+                continue
+
+            up_curve = dict(self.discount_curve)
+            down_curve = dict(self.discount_curve)
+            up_curve[key_rate] += self.BASIS_POINT
+            down_curve[key_rate] -= self.BASIS_POINT
+
+            pv_down = self._present_value_with_curve(down_curve)
+            pv_up = self._present_value_with_curve(up_curve)
+            key_rate_dv01s[key_rate] = (pv_down - pv_up) / 2.0
+
+        return key_rate_dv01s
+
+    def _present_value_with_curve(self, discount_curve: dict[int, float]) -> float:
+        """Return present value using a supplied discount curve."""
+        return sum(
+            cash_flow / (1.0 + discount_curve[year]) ** year
+            for year, cash_flow in self.cash_flows.items()
+        )
+
     def _discounted_cash_flow(self, year: int, cash_flow: float) -> float:
         """Return the present value contribution of one cash flow."""
         rate = self.discount_curve[year]

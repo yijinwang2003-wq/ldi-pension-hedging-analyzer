@@ -42,6 +42,53 @@ def test_present_value_decreases_when_rates_shift_upward() -> None:
     assert model.pv_under_parallel_shift(25.0) < model.present_value()
 
 
+def test_key_rate_dv01_returns_dict_with_requested_key_rates() -> None:
+    model = LiabilityModel(
+        cash_flows={5: 250.0, 10: 500.0},
+        discount_curve={5: 0.045, 10: 0.05},
+    )
+
+    result = model.key_rate_dv01([5, 10, 20])
+
+    assert set(result) == {5, 10, 20}
+
+
+def test_key_rate_dv01_is_positive_when_cash_flow_exists_at_key_rate() -> None:
+    model = LiabilityModel(
+        cash_flows={5: 250.0},
+        discount_curve={5: 0.045},
+    )
+
+    result = model.key_rate_dv01([5])
+
+    assert result[5] > 0.0
+
+
+def test_key_rate_dv01_missing_key_rate_returns_zero() -> None:
+    model = LiabilityModel(
+        cash_flows={5: 250.0},
+        discount_curve={5: 0.045},
+    )
+
+    result = model.key_rate_dv01([20])
+
+    assert result[20] == 0.0
+
+
+def test_key_rate_dv01_does_not_mutate_original_discount_curve() -> None:
+    discount_curve = {5: 0.045, 10: 0.05}
+    model = LiabilityModel(
+        cash_flows={5: 250.0, 10: 500.0},
+        discount_curve=discount_curve,
+    )
+    original_curve = dict(model.discount_curve)
+
+    model.key_rate_dv01([5, 10])
+
+    assert model.discount_curve == original_curve
+    assert discount_curve == original_curve
+
+
 @pytest.mark.parametrize(
     ("cash_flows", "discount_curve"),
     [

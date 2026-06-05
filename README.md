@@ -10,11 +10,12 @@ https://ldi-pension-hedging-analyzer.onrender.com/docs
 
 A quantitative analytics platform for pension liability valuation,
 interest-rate hedging, funding-ratio monitoring, and stochastic
-interest-rate scenario analysis.
+interest-rate scenario analysis — built to explore the core mechanics
+of Liability-Driven Investing (LDI) strategies used by institutional
+asset managers.
 
-The project is designed as an interview-ready LDI analytics prototype: the core
-finance logic is implemented in clean Python model classes, exposed through a
-FastAPI backend, and visualized through a Streamlit dashboard.
+The platform combines clean Python quant models, a FastAPI backend, and a
+Streamlit dashboard for interactive analytics.
 
 Built with:
 
@@ -585,5 +586,5 @@ Potential next improvements:
 
 ## Disclaimer
 
-This project is for educational and interview demonstration purposes only. It is
-not investment advice, actuarial advice, or a production risk system.
+This project is for educational and demonstration purposes only. It is not
+investment advice, actuarial advice, or a production risk system.

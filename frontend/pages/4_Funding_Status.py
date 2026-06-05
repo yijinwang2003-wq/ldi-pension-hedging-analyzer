@@ -23,25 +23,70 @@ def main() -> None:
     st.title("Funding Status")
 
     st.header("Inputs")
-    asset_market_value, cash_flow_df, discount_curve_df = render_inputs()
+    (
+        growth_portfolio,
+        hedging_portfolio,
+        asset_market_value,
+        cash_flow_df,
+        discount_curve_df,
+    ) = render_inputs()
 
     st.header("Analytics")
     if st.button("Calculate Funding Status", type="primary"):
         calculate_funding_status(
+            growth_portfolio=growth_portfolio,
+            hedging_portfolio=hedging_portfolio,
             asset_market_value=asset_market_value,
             cash_flow_df=cash_flow_df,
             discount_curve_df=discount_curve_df,
         )
 
 
-def render_inputs() -> tuple[float, pd.DataFrame, pd.DataFrame]:
+def render_inputs() -> tuple[float, float, float, pd.DataFrame, pd.DataFrame]:
     """Render funding status inputs and editable liability tables."""
-    asset_market_value = st.number_input(
-        "Asset Market Value",
-        min_value=0.0,
-        value=5_000_000.0,
-        step=100_000.0,
-        format="%.2f",
+    left, right = st.columns(2)
+
+    with left:
+        st.subheader("Growth Portfolio")
+        equities = st.number_input(
+            "Equities",
+            min_value=0.0,
+            value=3_000_000.0,
+            step=100_000.0,
+            format="%.2f",
+        )
+        credit = st.number_input(
+            "Credit",
+            min_value=0.0,
+            value=1_000_000.0,
+            step=100_000.0,
+            format="%.2f",
+        )
+
+    with right:
+        st.subheader("Hedging Portfolio")
+        long_bonds = st.number_input(
+            "Long Bonds",
+            min_value=0.0,
+            value=500_000.0,
+            step=50_000.0,
+            format="%.2f",
+        )
+        irs_exposure = st.number_input(
+            "IRS Exposure",
+            min_value=0.0,
+            value=700_000.0,
+            step=50_000.0,
+            format="%.2f",
+        )
+
+    growth_portfolio = equities + credit
+    hedging_portfolio = long_bonds + irs_exposure
+    asset_market_value = growth_portfolio + hedging_portfolio
+    render_portfolio_summary_metrics(
+        growth_portfolio=growth_portfolio,
+        hedging_portfolio=hedging_portfolio,
+        asset_market_value=asset_market_value,
     )
 
     default_cash_flows = pd.DataFrame(
@@ -63,8 +108,8 @@ def render_inputs() -> tuple[float, pd.DataFrame, pd.DataFrame]:
         }
     )
 
-    left, right = st.columns(2)
-    with left:
+    table_left, table_right = st.columns(2)
+    with table_left:
         st.subheader("Cash Flow Table")
         cash_flow_df = st.data_editor(
             default_cash_flows,
@@ -73,7 +118,7 @@ def render_inputs() -> tuple[float, pd.DataFrame, pd.DataFrame]:
             hide_index=True,
         )
 
-    with right:
+    with table_right:
         st.subheader("Discount Curve Table")
         discount_curve_df = st.data_editor(
             default_discount_curve,
@@ -82,10 +127,18 @@ def render_inputs() -> tuple[float, pd.DataFrame, pd.DataFrame]:
             hide_index=True,
         )
 
-    return asset_market_value, cash_flow_df, discount_curve_df
+    return (
+        growth_portfolio,
+        hedging_portfolio,
+        asset_market_value,
+        cash_flow_df,
+        discount_curve_df,
+    )
 
 
 def calculate_funding_status(
+    growth_portfolio: float,
+    hedging_portfolio: float,
     asset_market_value: float,
     cash_flow_df: pd.DataFrame,
     discount_curve_df: pd.DataFrame,
@@ -119,7 +172,22 @@ def calculate_funding_status(
         liability_dv01=liability_dv01,
     )
 
+    st.header("Funding Ratio Attribution")
+    render_funding_ratio_attribution(
+        growth_portfolio=growth_portfolio,
+        hedging_portfolio=hedging_portfolio,
+        asset_market_value=asset_market_value,
+    )
+
     st.header("Visualization")
+    render_portfolio_allocation_pie_chart(
+        growth_portfolio=growth_portfolio,
+        hedging_portfolio=hedging_portfolio,
+    )
+    render_portfolio_type_chart(
+        growth_portfolio=growth_portfolio,
+        hedging_portfolio=hedging_portfolio,
+    )
     render_asset_liability_chart(
         asset_market_value=asset_market_value,
         liability_pv=liability_pv,
@@ -141,6 +209,36 @@ def post_liability_endpoint(
     return response.json()
 
 
+def render_portfolio_summary_metrics(
+    growth_portfolio: float,
+    hedging_portfolio: float,
+    asset_market_value: float,
+) -> None:
+    """Render top-level portfolio allocation metrics."""
+    columns = st.columns(3)
+    columns[0].metric("Growth Portfolio", f"${growth_portfolio:,.0f}")
+    columns[1].metric("Hedging Portfolio", f"${hedging_portfolio:,.0f}")
+    columns[2].metric("Total Assets", f"${asset_market_value:,.0f}")
+
+
+def render_funding_ratio_attribution(
+    growth_portfolio: float,
+    hedging_portfolio: float,
+    asset_market_value: float,
+) -> None:
+    """Render growth and hedging allocation attribution metrics."""
+    if asset_market_value == 0.0:
+        st.error("Portfolio allocation is undefined when total assets are zero.")
+        return
+
+    growth_allocation = growth_portfolio / asset_market_value
+    hedging_allocation = hedging_portfolio / asset_market_value
+
+    columns = st.columns(2)
+    columns[0].metric("Growth Portfolio", f"{growth_allocation:.0%}")
+    columns[1].metric("Hedging Portfolio", f"{hedging_allocation:.0%}")
+
+
 def render_metrics(
     asset_market_value: float,
     liability_pv: float,
@@ -150,7 +248,7 @@ def render_metrics(
 ) -> None:
     """Render funding status metrics in columns."""
     columns = st.columns(5)
-    columns[0].metric("Asset Market Value", f"${asset_market_value:,.2f}")
+    columns[0].metric("Total Assets", f"${asset_market_value:,.2f}")
     columns[1].metric("Liability PV", f"${liability_pv:,.2f}")
     render_funding_ratio_card(columns[2], funding_ratio)
     columns[3].metric("Surplus / Deficit", f"${surplus:,.2f}")
@@ -190,6 +288,48 @@ def funding_ratio_color(funding_ratio: float) -> str:
     return "#dc2626"
 
 
+def render_portfolio_allocation_pie_chart(
+    growth_portfolio: float,
+    hedging_portfolio: float,
+) -> None:
+    """Render a pie chart of growth versus hedging portfolio allocation."""
+    allocation_df = pd.DataFrame(
+        {
+            "Portfolio Type": ["Growth", "Hedging"],
+            "Value": [growth_portfolio, hedging_portfolio],
+        }
+    )
+    fig = px.pie(
+        allocation_df,
+        names="Portfolio Type",
+        values="Value",
+        hole=0.35,
+    )
+    fig.update_traces(textposition="inside", textinfo="percent+label")
+    st.plotly_chart(fig, use_container_width=True)
+
+
+def render_portfolio_type_chart(
+    growth_portfolio: float,
+    hedging_portfolio: float,
+) -> None:
+    """Render a bar chart comparing growth and hedging portfolios."""
+    portfolio_df = pd.DataFrame(
+        {
+            "Portfolio Type": ["Growth", "Hedging"],
+            "Value": [growth_portfolio, hedging_portfolio],
+        }
+    )
+    fig = px.bar(
+        portfolio_df,
+        x="Portfolio Type",
+        y="Value",
+        labels={"Value": "Market Value"},
+    )
+    fig.update_layout(yaxis_tickprefix="$", yaxis_tickformat=",.0f")
+    st.plotly_chart(fig, use_container_width=True)
+
+
 def render_asset_liability_chart(
     asset_market_value: float,
     liability_pv: float,
@@ -197,7 +337,7 @@ def render_asset_liability_chart(
     """Render a bar chart comparing assets and liabilities."""
     comparison_df = pd.DataFrame(
         {
-            "Measure": ["Asset Market Value", "Liability PV"],
+            "Measure": ["Total Assets", "Liability PV"],
             "Value": [asset_market_value, liability_pv],
         }
     )
