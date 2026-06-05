@@ -36,8 +36,9 @@ Built with:
 - Present Value
 - Macaulay Duration
 - Modified Duration
-- DV01
-- Parallel rate-shift valuation
+- Parallel DV01
+- Key-rate DV01 by maturity bucket
+- Hedge maturity suggestion
 
 ### Hedge Optimizer
 
@@ -60,10 +61,19 @@ Built with:
 
 ### Funding Status
 
+- Growth Portfolio and Hedging Portfolio separation
+- Total asset calculation
 - Funding ratio calculation
-- Asset vs liability reporting
 - Surplus / deficit monitoring
-- Liability DV01 reporting
+- Asset-vs-liability visualization
+
+### Client Report
+
+- Downloadable PDF client report
+- Downloadable CSV summary
+- Executive summary generation
+- Funding status charts
+- Methodology section
 
 ---
 
@@ -104,10 +114,11 @@ ldi-pension-analyzer/
 │   ├── Dockerfile
 │   ├── app.py
 │   └── pages/
-│       ├── 1_Liability_Analysis.py
-│       ├── 2_Hedge_Optimizer.py
-│       ├── 3_Scenario_Analysis.py
-│       └── 4_Funding_Status.py
+│       ├── 1_Liability_Analysis.py   # Liability PV, Duration, DV01, Key-Rate DV01
+│       ├── 2_Hedge_Optimizer.py      # IRS valuation, hedge notional, DV01 risk
+│       ├── 3_Scenario_Analysis.py    # Vasicek Monte Carlo, stress scenarios
+│       ├── 4_Funding_Status.py       # Growth/Hedging split, funding ratio, surplus
+│       └── 5_Client_Report.py        # PDF/CSV quarterly report generation
 ├── tests/
 │   ├── test_liability.py
 │   └── test_hedging.py
@@ -308,6 +319,45 @@ Response:
 }
 ```
 
+### Liability Key-Rate DV01
+
+```http
+POST /api/liability/key-rate-dv01
+```
+
+Request:
+
+```json
+{
+  "cash_flows": {
+    "5": 1000000,
+    "10": 1250000,
+    "20": 1500000,
+    "30": 1750000
+  },
+  "discount_curve": {
+    "5": 0.04,
+    "10": 0.042,
+    "20": 0.045,
+    "30": 0.047
+  },
+  "key_rates": [5, 10, 20, 30]
+}
+```
+
+Response:
+
+```json
+{
+  "key_rate_dv01": {
+    "5": 421.18,
+    "10": 932.45,
+    "20": 1884.71,
+    "30": 2910.33
+  }
+}
+```
+
 ---
 
 ## Quant Models
@@ -465,6 +515,8 @@ Features:
 - Editable discount-curve table
 - Calls FastAPI liability endpoints
 - Displays Present Value, Macaulay Duration, Modified Duration, and DV01
+- Displays Key-Rate DV01 by maturity bucket
+- Suggests a hedge maturity bucket based on largest absolute Key-Rate DV01
 - Plots liability cash flows by year
 
 ### Hedge Optimizer
@@ -503,12 +555,28 @@ frontend/pages/4_Funding_Status.py
 Features:
 
 - Asset Market Value input
+- Growth Portfolio and Hedging Portfolio inputs
 - Editable cash-flow table
 - Editable discount-curve table
 - Calls FastAPI liability PV and DV01 endpoints
 - Computes Liability PV, Funding Ratio, Surplus / Deficit, and Liability DV01
+- Shows Growth/Hedging allocation attribution
 - Color-coded Funding Ratio metric
-- Asset-versus-liability and surplus/deficit bar charts
+- Asset-versus-liability, surplus/deficit, and portfolio allocation charts
+
+### Client Report
+
+```text
+frontend/pages/5_Client_Report.py
+```
+
+Features:
+
+- Client name and report date inputs
+- Calls FastAPI liability PV, DV01, and duration endpoints
+- Generates downloadable CSV summary
+- Generates downloadable PDF client report
+- Includes branded executive summary, metric table, interpretation, charts, and methodology
 
 ---
 
@@ -517,6 +585,10 @@ Features:
 ### Liability Analysis
 
 ![Liability](docs/liability.png)
+
+### Key-Rate DV01 Analysis
+
+![Key-Rate DV01](docs/key_rate_dv01.png)
 
 ### Hedge Optimizer
 
@@ -529,6 +601,14 @@ Features:
 ### Funding Status
 
 ![Funding](docs/funding.png)
+
+### Funding Ratio Attribution
+
+![Funding Attribution](docs/funding_attribution.png)
+
+### Client Report
+
+![Client Report](docs/client_report.png)
 
 ---
 
@@ -545,6 +625,7 @@ Current test coverage includes:
 - Liability present value
 - Liability duration positivity
 - Liability DV01 positivity
+- Liability key-rate DV01 behavior
 - Liability parallel shift behavior
 - Liability input validation
 - Swap fixed leg PV
