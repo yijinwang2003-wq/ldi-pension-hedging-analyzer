@@ -1,5 +1,7 @@
 # LDI Pension Hedging Analyzer
 
+[![CI](https://github.com/yijinwang2003-wq/ldi-pension-hedging-analyzer/actions/workflows/ci.yml/badge.svg)](https://github.com/yijinwang2003-wq/ldi-pension-hedging-analyzer/actions/workflows/ci.yml)
+
 Live Demo:
 https://ldi-pension-frontend.onrender.com
 
@@ -72,6 +74,7 @@ Built with:
 - Downloadable PDF client report
 - Downloadable CSV summary
 - Executive summary generation
+- Growth/Hedging portfolio allocation reporting
 - Funding status charts
 - Methodology section
 
@@ -98,6 +101,9 @@ Current implementation:
 
 ```text
 ldi-pension-analyzer/
+├── .github/
+│   └── workflows/
+│       └── ci.yml
 ├── backend/
 │   ├── Dockerfile
 │   ├── main.py
@@ -554,8 +560,8 @@ frontend/pages/4_Funding_Status.py
 
 Features:
 
-- Asset Market Value input
 - Growth Portfolio and Hedging Portfolio inputs
+- Total asset calculation from equities, credit, long bonds, and IRS exposure
 - Editable cash-flow table
 - Editable discount-curve table
 - Calls FastAPI liability PV and DV01 endpoints
@@ -573,10 +579,11 @@ frontend/pages/5_Client_Report.py
 Features:
 
 - Client name and report date inputs
+- Growth Portfolio and Hedging Portfolio inputs
 - Calls FastAPI liability PV, DV01, and duration endpoints
 - Generates downloadable CSV summary
 - Generates downloadable PDF client report
-- Includes branded executive summary, metric table, interpretation, charts, and methodology
+- Includes portfolio allocation, branded executive summary, metric table, interpretation, charts, and methodology
 
 ---
 
@@ -619,6 +626,8 @@ Run the test suite:
 ```bash
 python3 -m pytest
 ```
+
+GitHub Actions runs the same pytest suite on pushes and pull requests to `main`.
 
 Current test coverage includes:
 

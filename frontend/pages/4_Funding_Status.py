@@ -3,11 +3,21 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
+import sys
 
 import pandas as pd
 import plotly.express as px
 import requests
 import streamlit as st
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from backend.models.portfolio import PortfolioModel
 
 
 API_BASE_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:8000/api")
@@ -80,9 +90,15 @@ def render_inputs() -> tuple[float, float, float, pd.DataFrame, pd.DataFrame]:
             format="%.2f",
         )
 
-    growth_portfolio = equities + credit
-    hedging_portfolio = long_bonds + irs_exposure
-    asset_market_value = growth_portfolio + hedging_portfolio
+    portfolio = PortfolioModel(
+        equities=equities,
+        credit=credit,
+        long_bonds=long_bonds,
+        irs_exposure=irs_exposure,
+    )
+    growth_portfolio = portfolio.growth_portfolio()
+    hedging_portfolio = portfolio.hedging_portfolio()
+    asset_market_value = portfolio.total_assets()
     render_portfolio_summary_metrics(
         growth_portfolio=growth_portfolio,
         hedging_portfolio=hedging_portfolio,

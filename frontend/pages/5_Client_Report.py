@@ -5,10 +5,13 @@ from __future__ import annotations
 from datetime import date
 from io import BytesIO
 import os
+from pathlib import Path
+import sys
 
 import pandas as pd
 import plotly.express as px
 from reportlab.graphics.charts.barcharts import VerticalBarChart
+from reportlab.graphics.charts.piecharts import Pie
 from reportlab.graphics.shapes import Drawing, String
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
@@ -24,6 +27,14 @@ from reportlab.platypus import (
 )
 import requests
 import streamlit as st
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from backend.models.portfolio import PortfolioModel
 
 
 API_BASE_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:8000/api")
@@ -42,7 +53,7 @@ def main() -> None:
     (
         client_name,
         report_date,
-        asset_market_value,
+        portfolio,
         cash_flow_df,
         discount_curve_df,
     ) = render_inputs()
@@ -52,26 +63,62 @@ def main() -> None:
         generate_client_report(
             client_name=client_name,
             report_date=report_date,
-            asset_market_value=asset_market_value,
+            portfolio=portfolio,
             cash_flow_df=cash_flow_df,
             discount_curve_df=discount_curve_df,
         )
 
 
-def render_inputs() -> tuple[str, date, float, pd.DataFrame, pd.DataFrame]:
+def render_inputs() -> tuple[str, date, PortfolioModel, pd.DataFrame, pd.DataFrame]:
     """Render client report inputs and editable liability tables."""
     left, right = st.columns(2)
     with left:
         client_name = st.text_input("Client Name", value="Sample Pension Plan")
-        asset_market_value = st.number_input(
-            "Asset Market Value",
+    with right:
+        report_date = st.date_input("Report Date", value=date.today())
+
+    growth_col, hedging_col = st.columns(2)
+    with growth_col:
+        st.subheader("Growth Portfolio")
+        equities = st.number_input(
+            "Equities",
             min_value=0.0,
-            value=5_000_000.0,
+            value=3_000_000.0,
             step=100_000.0,
             format="%.2f",
         )
-    with right:
-        report_date = st.date_input("Report Date", value=date.today())
+        credit = st.number_input(
+            "Credit",
+            min_value=0.0,
+            value=1_000_000.0,
+            step=100_000.0,
+            format="%.2f",
+        )
+
+    with hedging_col:
+        st.subheader("Hedging Portfolio")
+        long_bonds = st.number_input(
+            "Long Bonds",
+            min_value=0.0,
+            value=500_000.0,
+            step=50_000.0,
+            format="%.2f",
+        )
+        irs_exposure = st.number_input(
+            "IRS Exposure",
+            min_value=0.0,
+            value=700_000.0,
+            step=50_000.0,
+            format="%.2f",
+        )
+
+    portfolio = PortfolioModel(
+        equities=equities,
+        credit=credit,
+        long_bonds=long_bonds,
+        irs_exposure=irs_exposure,
+    )
+    render_portfolio_summary_metrics(portfolio)
 
     default_cash_flows = pd.DataFrame(
         {
@@ -111,13 +158,38 @@ def render_inputs() -> tuple[str, date, float, pd.DataFrame, pd.DataFrame]:
             hide_index=True,
         )
 
-    return client_name, report_date, asset_market_value, cash_flow_df, discount_curve_df
+    return client_name, report_date, portfolio, cash_flow_df, discount_curve_df
+
+
+def render_portfolio_summary_metrics(portfolio: PortfolioModel) -> None:
+    """Render portfolio totals and allocation weights before report generation."""
+    portfolio_data = portfolio.as_dict()
+    columns = st.columns(3)
+    columns[0].metric(
+        "Growth Portfolio",
+        f"${portfolio_data['growth_portfolio']:,.2f}",
+    )
+    columns[1].metric(
+        "Hedging Portfolio",
+        f"${portfolio_data['hedging_portfolio']:,.2f}",
+    )
+    columns[2].metric("Total Assets", f"${portfolio_data['total_assets']:,.2f}")
+
+    allocation_columns = st.columns(2)
+    allocation_columns[0].metric(
+        "Growth Allocation",
+        f"{portfolio_data['growth_allocation']:.1%}",
+    )
+    allocation_columns[1].metric(
+        "Hedging Allocation",
+        f"{portfolio_data['hedging_allocation']:.1%}",
+    )
 
 
 def generate_client_report(
     client_name: str,
     report_date: date,
-    asset_market_value: float,
+    portfolio: PortfolioModel,
     cash_flow_df: pd.DataFrame,
     discount_curve_df: pd.DataFrame,
 ) -> None:
@@ -139,9 +211,12 @@ def generate_client_report(
         st.error("Funding ratio is undefined when liability PV is zero.")
         return
 
+    portfolio_data = portfolio.as_dict()
+    asset_market_value = portfolio.total_assets()
     report_data = {
         "client_name": client_name,
         "report_date": report_date.isoformat(),
+        **portfolio_data,
         "asset_market_value": asset_market_value,
         "liability_pv": liability_pv,
         "funding_ratio": asset_market_value / liability_pv,
@@ -174,8 +249,8 @@ def render_metrics(report_data: dict[str, float | str]) -> None:
     """Render report metrics in columns."""
     columns = st.columns(6)
     columns[0].metric(
-        "Asset Market Value",
-        f"${float(report_data['asset_market_value']):,.2f}",
+        "Total Assets",
+        f"${float(report_data['total_assets']):,.2f}",
     )
     columns[1].metric("Liability PV", f"${float(report_data['liability_pv']):,.2f}")
     columns[2].metric("Funding Ratio", f"{float(report_data['funding_ratio']):.2f}")
@@ -197,9 +272,9 @@ def render_visualization(report_data: dict[str, float | str]) -> None:
     """Render a compact report summary chart."""
     chart_df = pd.DataFrame(
         {
-            "Measure": ["Asset Market Value", "Liability PV", "Surplus / Deficit"],
+            "Measure": ["Total Assets", "Liability PV", "Surplus / Deficit"],
             "Value": [
-                float(report_data["asset_market_value"]),
+                float(report_data["total_assets"]),
                 float(report_data["liability_pv"]),
                 float(report_data["surplus_deficit"]),
             ],
@@ -213,6 +288,25 @@ def render_visualization(report_data: dict[str, float | str]) -> None:
     )
     fig.update_layout(yaxis_tickprefix="$", yaxis_tickformat=",.0f")
     st.plotly_chart(fig, use_container_width=True)
+
+    allocation_df = pd.DataFrame(
+        {
+            "Portfolio": ["Growth Portfolio", "Hedging Portfolio"],
+            "Value": [
+                float(report_data["growth_portfolio"]),
+                float(report_data["hedging_portfolio"]),
+            ],
+        }
+    )
+    allocation_fig = px.pie(
+        allocation_df,
+        names="Portfolio",
+        values="Value",
+        title="Portfolio Allocation",
+        hole=0.35,
+    )
+    allocation_fig.update_traces(textposition="inside", textinfo="percent+label")
+    st.plotly_chart(allocation_fig, use_container_width=True)
 
 
 def render_downloads(report_data: dict[str, float | str]) -> None:
@@ -281,7 +375,9 @@ def create_pdf_report(report_data: dict[str, float | str]) -> bytes:
     metric_table = Table(
         [
             ["Metric", "Value"],
-            ["Asset Market Value", format_currency(float(report_data["asset_market_value"]))],
+            ["Growth Portfolio", format_currency(float(report_data["growth_portfolio"]))],
+            ["Hedging Portfolio", format_currency(float(report_data["hedging_portfolio"]))],
+            ["Total Assets", format_currency(float(report_data["total_assets"]))],
             ["Liability PV", format_currency(float(report_data["liability_pv"]))],
             ["Funding Ratio", f"{float(report_data['funding_ratio']):.2f}"],
             ["Surplus / Deficit", format_currency(float(report_data["surplus_deficit"]))],
@@ -304,6 +400,36 @@ def create_pdf_report(report_data: dict[str, float | str]) -> bytes:
     elements.append(metric_table)
     elements.append(Spacer(1, 12))
 
+    elements.append(Paragraph("Portfolio Allocation", styles["Heading2"]))
+    allocation_table = Table(
+        [
+            ["Portfolio", "Market Value", "Allocation"],
+            [
+                "Growth Portfolio",
+                format_currency(float(report_data["growth_portfolio"])),
+                f"{float(report_data['growth_allocation']):.1%}",
+            ],
+            [
+                "Hedging Portfolio",
+                format_currency(float(report_data["hedging_portfolio"])),
+                f"{float(report_data['hedging_allocation']):.1%}",
+            ],
+        ]
+    )
+    allocation_table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
+                ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("ALIGN", (1, 1), (-1, -1), "RIGHT"),
+                ("PADDING", (0, 0), (-1, -1), 6),
+            ]
+        )
+    )
+    elements.append(allocation_table)
+    elements.append(Spacer(1, 12))
+
     elements.append(Paragraph("Interpretation", styles["Heading2"]))
     elements.append(Paragraph(funding_interpretation(float(report_data["funding_ratio"])), styles["Normal"]))
     elements.append(Spacer(1, 12))
@@ -317,11 +443,16 @@ def create_pdf_report(report_data: dict[str, float | str]) -> bytes:
     elements.append(create_asset_liability_chart(report_data))
     elements.append(Spacer(1, 18))
 
+    elements.append(Paragraph("Portfolio Allocation Chart", styles["Heading2"]))
+    elements.append(create_portfolio_allocation_chart(report_data))
+    elements.append(Spacer(1, 18))
+
     elements.append(Paragraph("Methodology", styles["Heading2"]))
     methodology = [
         "Liability PV is calculated by discounting projected pension cash flows.",
         "DV01 measures sensitivity to a 1bp interest-rate move.",
-        "Funding Ratio equals Asset Market Value divided by Liability PV.",
+        "Funding Ratio equals Total Assets divided by Liability PV.",
+        "Total Assets equal Growth Portfolio plus Hedging Portfolio market value.",
     ]
     for item in methodology:
         elements.append(Paragraph(f"- {item}", styles["Normal"]))
@@ -337,10 +468,20 @@ def generate_executive_summary(report_data: dict[str, float | str]) -> list[str]
     liability_pv = float(report_data["liability_pv"])
     liability_dv01 = float(report_data["liability_dv01"])
     surplus_deficit = float(report_data["surplus_deficit"])
+    growth_portfolio = float(report_data["growth_portfolio"])
+    hedging_portfolio = float(report_data["hedging_portfolio"])
+    growth_allocation = float(report_data["growth_allocation"])
+    hedging_allocation = float(report_data["hedging_allocation"])
 
     funding_text = (
         f"The pension plan is currently {funding_ratio:.1%} funded, "
         f"with liabilities valued at {format_currency(liability_pv)}."
+    )
+    allocation_text = (
+        f"Assets are split between a growth portfolio of "
+        f"{format_currency(growth_portfolio)} ({growth_allocation:.1%}) and a "
+        f"hedging portfolio of {format_currency(hedging_portfolio)} "
+        f"({hedging_allocation:.1%})."
     )
     dv01_text = (
         f"The plan exhibits a liability DV01 of {format_currency(liability_dv01)}, "
@@ -357,7 +498,7 @@ def generate_executive_summary(report_data: dict[str, float | str]) -> list[str]
             "require additional hedging or asset growth to achieve full funding."
         )
 
-    return [funding_text, dv01_text, surplus_text]
+    return [funding_text, allocation_text, dv01_text, surplus_text]
 
 
 def create_funding_ratio_chart(funding_ratio: float) -> Drawing:
@@ -384,7 +525,7 @@ def create_funding_ratio_chart(funding_ratio: float) -> Drawing:
 
 def create_asset_liability_chart(report_data: dict[str, float | str]) -> Drawing:
     """Create a ReportLab bar chart comparing assets, liabilities, and surplus."""
-    asset_market_value = float(report_data["asset_market_value"])
+    asset_market_value = float(report_data["total_assets"])
     liability_pv = float(report_data["liability_pv"])
     surplus_deficit = float(report_data["surplus_deficit"])
     max_value = max(abs(asset_market_value), abs(liability_pv), abs(surplus_deficit))
@@ -402,7 +543,27 @@ def create_asset_liability_chart(report_data: dict[str, float | str]) -> Drawing
     chart.valueAxis.valueStep = max_value / 4 if max_value else 1
     chart.bars[0].fillColor = colors.HexColor("#2563eb")
     drawing.add(chart)
-    drawing.add(String(132, 20, "Asset Market Value vs Liability PV", fontSize=11))
+    drawing.add(String(142, 20, "Total Assets vs Liability PV", fontSize=11))
+    return drawing
+
+
+def create_portfolio_allocation_chart(report_data: dict[str, float | str]) -> Drawing:
+    """Create a ReportLab pie chart for growth and hedging allocation."""
+    drawing = Drawing(440, 220)
+    pie = Pie()
+    pie.x = 145
+    pie.y = 40
+    pie.width = 150
+    pie.height = 150
+    pie.data = [
+        float(report_data["growth_portfolio"]),
+        float(report_data["hedging_portfolio"]),
+    ]
+    pie.labels = ["Growth", "Hedging"]
+    pie.slices[0].fillColor = colors.HexColor("#2563eb")
+    pie.slices[1].fillColor = colors.HexColor("#16a34a")
+    drawing.add(pie)
+    drawing.add(String(115, 18, "Growth and Hedging Portfolio Allocation", fontSize=11))
     return drawing
 
 
