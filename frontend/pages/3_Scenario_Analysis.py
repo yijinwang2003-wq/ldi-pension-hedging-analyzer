@@ -10,6 +10,8 @@ import plotly.express as px
 import requests
 import streamlit as st
 
+from frontend.api_client import post_api_json, render_backend_error, warm_up_backend
+
 
 API_BASE_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:8000/api")
 TIME_STEP = 0.25
@@ -111,17 +113,16 @@ def run_scenario_analysis(
     }
 
     try:
-        response = requests.post(
-            f"{API_BASE_URL}/scenarios/vasicek",
-            json=payload,
-            timeout=10,
+        warm_up_backend(API_BASE_URL)
+        result = post_api_json(
+            API_BASE_URL,
+            "scenarios/vasicek",
+            payload,
         )
-        response.raise_for_status()
     except requests.RequestException as exc:
-        st.error(f"Unable to generate scenarios: {exc}")
+        st.error(render_backend_error("generate scenarios", exc))
         return
 
-    result = response.json()
     paths = np.array(result["paths"], dtype=float)
     terminal_rates = np.array(result["terminal_rates"], dtype=float)
     summary = result["summary"]

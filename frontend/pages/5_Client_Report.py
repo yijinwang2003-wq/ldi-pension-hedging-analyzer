@@ -28,6 +28,8 @@ from reportlab.platypus import (
 import requests
 import streamlit as st
 
+from frontend.api_client import post_api_json, render_backend_error, warm_up_backend
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -199,11 +201,12 @@ def generate_client_report(
         return
 
     try:
+        warm_up_backend(API_BASE_URL)
         present_value = post_liability_endpoint("pv", payload)
         dv01 = post_liability_endpoint("dv01", payload)
         duration = post_liability_endpoint("duration", payload)
     except requests.RequestException as exc:
-        st.error(f"Unable to generate client report: {exc}")
+        st.error(render_backend_error("generate client report", exc))
         return
 
     liability_pv = present_value["present_value"]
@@ -236,13 +239,7 @@ def post_liability_endpoint(
     payload: dict[str, dict[int, float]],
 ) -> dict[str, float]:
     """POST a liability payload to an API endpoint and return JSON data."""
-    response = requests.post(
-        f"{API_BASE_URL}/liability/{endpoint}",
-        json=payload,
-        timeout=10,
-    )
-    response.raise_for_status()
-    return response.json()
+    return post_api_json(API_BASE_URL, f"liability/{endpoint}", payload)
 
 
 def render_metrics(report_data: dict[str, float | str]) -> None:

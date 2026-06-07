@@ -9,6 +9,8 @@ import plotly.express as px
 import requests
 import streamlit as st
 
+from frontend.api_client import post_api_json, render_backend_error, warm_up_backend
+
 
 API_BASE_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:8000/api")
 KEY_RATES = [5, 10, 20, 30]
@@ -87,6 +89,7 @@ def calculate_liability_analytics(
         return
 
     try:
+        warm_up_backend(API_BASE_URL)
         present_value = post_liability_endpoint("pv", payload)
         duration = post_liability_endpoint("duration", payload)
         dv01 = post_liability_endpoint("dv01", payload)
@@ -98,7 +101,7 @@ def calculate_liability_analytics(
             },
         )
     except requests.RequestException as exc:
-        st.error(f"Unable to calculate liability analytics: {exc}")
+        st.error(render_backend_error("calculate liability analytics", exc))
         return
 
     render_liability_metrics(
@@ -115,13 +118,7 @@ def post_liability_endpoint(
     payload: dict[str, object],
 ) -> dict[str, float]:
     """POST a liability payload to an API endpoint and return JSON data."""
-    response = requests.post(
-        f"{API_BASE_URL}/liability/{endpoint}",
-        json=payload,
-        timeout=10,
-    )
-    response.raise_for_status()
-    return response.json()
+    return post_api_json(API_BASE_URL, f"liability/{endpoint}", payload)
 
 
 def render_liability_metrics(
