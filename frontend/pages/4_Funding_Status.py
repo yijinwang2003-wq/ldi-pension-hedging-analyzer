@@ -11,15 +11,17 @@ import plotly.express as px
 import requests
 import streamlit as st
 
-from frontend.api_client import post_api_json, render_backend_error, warm_up_backend
-
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+FRONTEND_ROOT = Path(__file__).resolve().parents[1]
 
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
+if str(FRONTEND_ROOT) not in sys.path:
+    sys.path.insert(0, str(FRONTEND_ROOT))
 
 from backend.models.portfolio import PortfolioModel
+from api_client import post_api_json, render_backend_error, warm_up_backend
 
 
 API_BASE_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:8000/api")

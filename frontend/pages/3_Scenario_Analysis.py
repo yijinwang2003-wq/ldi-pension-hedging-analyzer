@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
+import sys
 
 import numpy as np
 import pandas as pd
@@ -10,7 +12,12 @@ import plotly.express as px
 import requests
 import streamlit as st
 
-from frontend.api_client import post_api_json, render_backend_error, warm_up_backend
+FRONTEND_ROOT = Path(__file__).resolve().parents[1]
+
+if str(FRONTEND_ROOT) not in sys.path:
+    sys.path.insert(0, str(FRONTEND_ROOT))
+
+from api_client import post_api_json, render_backend_error, warm_up_backend
 
 
 API_BASE_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:8000/api")
