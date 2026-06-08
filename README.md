@@ -10,11 +10,12 @@ https://ldi-pension-hedging-analyzer.onrender.com/docs
 
 ## Overview
 
-A quantitative analytics platform for pension liability valuation,
-interest-rate hedging, funding-ratio monitoring, and stochastic
-interest-rate scenario analysis — built to explore the core mechanics
-of Liability-Driven Investing (LDI) strategies used by institutional
-asset managers.
+LDI Pension Hedging Analyzer is a full-stack Liability-Driven Investment
+(LDI) analytics platform designed for defined-benefit pension plans.
+
+The platform helps pension sponsors and investment teams evaluate pension
+liabilities, measure interest-rate risk, construct hedging portfolios,
+monitor funding status, and generate client-facing reports.
 
 The platform combines clean Python quant models, a FastAPI backend, and a
 Streamlit dashboard for interactive analytics.
