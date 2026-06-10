@@ -1199,29 +1199,6 @@ Potential next improvements:
 
 ---
 
-## Interview Talking Points
-
-- The project separates liability valuation, hedge construction, curve scenarios,
-  and reporting attribution into modular model classes.
-- Key-rate DV01 and curve twists show that LDI risk is not only about parallel
-  duration; curve shape matters for long pension cash flows.
-- The multi-instrument optimizer shows why matching only total DV01 can leave
-  material curve risk when liabilities are concentrated in different maturity
-  buckets than the hedge asset.
-- Hedge effectiveness is reported as a DV01 coverage ratio plus residual DV01,
-  which is the language used in pension risk dashboards.
-- Funding-ratio attribution translates market moves into sponsor-level outcomes:
-  asset return, liability discount-rate movement, benefit payments, hedge P&L,
-  and residual.
-- Nelson-Siegel fitting demonstrates how market curve points can become a smooth
-  discount curve while preserving manual curve input as a fallback.
-- Historical stress testing makes the hedge story concrete by replaying familiar
-  rate regimes and comparing hedged versus unhedged funding-ratio outcomes.
-- The glide path advisor simulates a real pension de-risking policy: as funded
-  status improves, the plan increases hedge ratios to lock in gains.
-- CSV upload support makes the demo feel like an institutional workflow where
-  cash-flow, KRD, and holdings data arrive from external systems.
-
 ## Real-World LDI Connection
 
 In practice, pension sponsors hedge funded-status volatility rather than asset
