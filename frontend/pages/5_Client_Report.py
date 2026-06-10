@@ -60,6 +60,7 @@ def main() -> None:
         portfolio,
         cash_flow_df,
         discount_curve_df,
+        attribution_inputs,
     ) = render_inputs()
 
     st.header("Report")
@@ -70,10 +71,18 @@ def main() -> None:
             portfolio=portfolio,
             cash_flow_df=cash_flow_df,
             discount_curve_df=discount_curve_df,
+            attribution_inputs=attribution_inputs,
         )
 
 
-def render_inputs() -> tuple[str, date, PortfolioModel, pd.DataFrame, pd.DataFrame]:
+def render_inputs() -> tuple[
+    str,
+    date,
+    PortfolioModel,
+    pd.DataFrame,
+    pd.DataFrame,
+    dict[str, float],
+]:
     """Render client report inputs and editable liability tables."""
     left, right = st.columns(2)
     with left:
@@ -162,7 +171,94 @@ def render_inputs() -> tuple[str, date, PortfolioModel, pd.DataFrame, pd.DataFra
             hide_index=True,
         )
 
-    return client_name, report_date, portfolio, cash_flow_df, discount_curve_df
+    attribution_inputs = render_attribution_inputs(
+        beginning_assets=portfolio.total_assets() * 0.97,
+        ending_assets=portfolio.total_assets(),
+    )
+
+    return (
+        client_name,
+        report_date,
+        portfolio,
+        cash_flow_df,
+        discount_curve_df,
+        attribution_inputs,
+    )
+
+
+def render_attribution_inputs(
+    beginning_assets: float,
+    ending_assets: float,
+) -> dict[str, float]:
+    """Render attribution inputs for client report downloads."""
+    st.subheader("Period Attribution")
+    first, second, third = st.columns(3)
+    with first:
+        beginning_assets = st.number_input(
+            "Report Beginning Assets",
+            min_value=0.0,
+            value=beginning_assets,
+            step=100_000.0,
+            format="%.2f",
+        )
+        ending_assets = st.number_input(
+            "Report Ending Assets",
+            min_value=0.0,
+            value=ending_assets,
+            step=100_000.0,
+            format="%.2f",
+        )
+    with second:
+        beginning_liability_pv = st.number_input(
+            "Report Beginning Liability PV",
+            min_value=1.0,
+            value=5_500_000.0,
+            step=100_000.0,
+            format="%.2f",
+        )
+        ending_liability_pv = st.number_input(
+            "Report Ending Liability PV",
+            min_value=1.0,
+            value=5_650_000.0,
+            step=100_000.0,
+            format="%.2f",
+        )
+    with third:
+        asset_return = st.number_input(
+            "Report Asset Return",
+            value=225_000.0,
+            step=25_000.0,
+            format="%.2f",
+        )
+        liability_discount_rate_change = st.number_input(
+            "Report Liability Discount-Rate Change",
+            value=125_000.0,
+            step=25_000.0,
+            format="%.2f",
+        )
+        benefit_payments = st.number_input(
+            "Report Benefit Payments",
+            value=100_000.0,
+            step=25_000.0,
+            format="%.2f",
+        )
+        hedge_return = st.number_input(
+            "Report Hedge Return",
+            value=75_000.0,
+            step=25_000.0,
+            format="%.2f",
+        )
+
+    return {
+        "beginning_assets": beginning_assets,
+        "ending_assets": ending_assets,
+        "beginning_liability_pv": beginning_liability_pv,
+        "ending_liability_pv": ending_liability_pv,
+        "asset_return": asset_return,
+        "liability_discount_rate_change": liability_discount_rate_change,
+        "benefit_payments": benefit_payments,
+        "hedge_return": hedge_return,
+    }
 
 
 def render_portfolio_summary_metrics(portfolio: PortfolioModel) -> None:
@@ -196,6 +292,7 @@ def generate_client_report(
     portfolio: PortfolioModel,
     cash_flow_df: pd.DataFrame,
     discount_curve_df: pd.DataFrame,
+    attribution_inputs: dict[str, float],
 ) -> None:
     """Generate analytics, display metrics, and create report downloads."""
     payload = build_liability_payload(cash_flow_df, discount_curve_df)
@@ -207,6 +304,11 @@ def generate_client_report(
         present_value = post_liability_endpoint("pv", payload)
         dv01 = post_liability_endpoint("dv01", payload)
         duration = post_liability_endpoint("duration", payload)
+        attribution = post_api_json(
+            API_BASE_URL,
+            "reporting/funding-attribution",
+            attribution_inputs,
+        )
     except requests.RequestException as exc:
         st.error(render_backend_error("generate client report", exc))
         return
@@ -229,9 +331,11 @@ def generate_client_report(
         "liability_dv01": dv01["dv01"],
         "macaulay_duration": duration["macaulay_duration"],
         "modified_duration": duration["modified_duration"],
+        **prefix_keys(attribution, "attribution"),
     }
 
     render_metrics(report_data)
+    render_attribution_summary(report_data)
     render_visualization(report_data)
     render_downloads(report_data)
 
@@ -306,6 +410,27 @@ def render_visualization(report_data: dict[str, float | str]) -> None:
     )
     allocation_fig.update_traces(textposition="inside", textinfo="percent+label")
     st.plotly_chart(allocation_fig, use_container_width=True)
+
+
+def render_attribution_summary(report_data: dict[str, float | str]) -> None:
+    """Render period-over-period attribution included in client report."""
+    st.subheader("Attribution Report")
+    columns = st.columns(3)
+    columns[0].metric(
+        "Beginning Funding Ratio",
+        f"{float(report_data['attribution_beginning_funding_ratio']):.2f}",
+    )
+    columns[1].metric(
+        "Ending Funding Ratio",
+        f"{float(report_data['attribution_ending_funding_ratio']):.2f}",
+    )
+    columns[2].metric(
+        "Total Change",
+        f"{float(report_data['attribution_total_change']):.2%}",
+    )
+
+    attribution_df = build_attribution_dataframe(report_data)
+    st.dataframe(attribution_df, use_container_width=True, hide_index=True)
 
 
 def render_downloads(report_data: dict[str, float | str]) -> None:
@@ -427,6 +552,25 @@ def create_pdf_report(report_data: dict[str, float | str]) -> bytes:
         )
     )
     elements.append(allocation_table)
+    elements.append(Spacer(1, 12))
+
+    elements.append(Paragraph("Funding Ratio Attribution", styles["Heading2"]))
+    attribution_rows = [["Driver", "Funding Ratio Contribution"]]
+    for row in build_attribution_dataframe(report_data).itertuples(index=False):
+        attribution_rows.append([row.Driver, f"{row.Contribution:.2%}"])
+    attribution_table = Table(attribution_rows)
+    attribution_table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
+                ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("ALIGN", (1, 1), (-1, -1), "RIGHT"),
+                ("PADDING", (0, 0), (-1, -1), 6),
+            ]
+        )
+    )
+    elements.append(attribution_table)
     elements.append(Spacer(1, 12))
 
     elements.append(Paragraph("Interpretation", styles["Heading2"]))
@@ -578,6 +722,33 @@ def funding_interpretation(funding_ratio: float) -> str:
 def format_currency(value: float) -> str:
     """Format a number as US currency."""
     return f"${value:,.2f}"
+
+
+def build_attribution_dataframe(report_data: dict[str, float | str]) -> pd.DataFrame:
+    """Return attribution report data in display order."""
+    return pd.DataFrame(
+        {
+            "Driver": [
+                "Asset return",
+                "Liability discount-rate",
+                "Cash flow / benefits",
+                "Hedge",
+                "Residual",
+            ],
+            "Contribution": [
+                float(report_data["attribution_asset_return_contribution"]),
+                float(report_data["attribution_liability_discount_rate_contribution"]),
+                float(report_data["attribution_cash_flow_contribution"]),
+                float(report_data["attribution_hedge_contribution"]),
+                float(report_data["attribution_residual_contribution"]),
+            ],
+        }
+    )
+
+
+def prefix_keys(data: dict[str, float], prefix: str) -> dict[str, float]:
+    """Prefix dictionary keys for flat report export."""
+    return {f"{prefix}_{key}": value for key, value in data.items()}
 
 
 def funding_ratio_report_color(funding_ratio: float) -> colors.Color:

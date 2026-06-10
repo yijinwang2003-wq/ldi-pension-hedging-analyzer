@@ -55,6 +55,10 @@ def main() -> None:
             discount_curve_df=discount_curve_df,
         )
 
+    st.divider()
+    st.header("Attribution Report")
+    render_attribution_report()
+
 
 def render_inputs() -> tuple[float, float, float, pd.DataFrame, pd.DataFrame]:
     """Render funding status inputs and editable liability tables."""
@@ -382,6 +386,123 @@ def render_surplus_chart(surplus: float) -> None:
     )
     fig.update_layout(yaxis_tickprefix="$", yaxis_tickformat=",.0f")
     st.plotly_chart(fig, use_container_width=True)
+
+
+def render_attribution_report() -> None:
+    """Render period-over-period funding-ratio attribution controls."""
+    first, second, third = st.columns(3)
+    with first:
+        beginning_assets = st.number_input(
+            "Beginning Assets",
+            min_value=0.0,
+            value=5_000_000.0,
+            step=100_000.0,
+            format="%.2f",
+        )
+        ending_assets = st.number_input(
+            "Ending Assets",
+            min_value=0.0,
+            value=5_250_000.0,
+            step=100_000.0,
+            format="%.2f",
+        )
+    with second:
+        beginning_liability_pv = st.number_input(
+            "Beginning Liability PV",
+            min_value=1.0,
+            value=5_500_000.0,
+            step=100_000.0,
+            format="%.2f",
+        )
+        ending_liability_pv = st.number_input(
+            "Ending Liability PV",
+            min_value=1.0,
+            value=5_650_000.0,
+            step=100_000.0,
+            format="%.2f",
+        )
+    with third:
+        asset_return = st.number_input(
+            "Asset Return",
+            value=225_000.0,
+            step=25_000.0,
+            format="%.2f",
+        )
+        liability_discount_rate_change = st.number_input(
+            "Liability Discount-Rate Change",
+            value=125_000.0,
+            step=25_000.0,
+            format="%.2f",
+        )
+        benefit_payments = st.number_input(
+            "Benefit Payments",
+            value=100_000.0,
+            step=25_000.0,
+            format="%.2f",
+        )
+        hedge_return = st.number_input(
+            "Hedge Return",
+            value=75_000.0,
+            step=25_000.0,
+            format="%.2f",
+        )
+
+    if st.button("Calculate Attribution"):
+        payload = {
+            "beginning_assets": beginning_assets,
+            "ending_assets": ending_assets,
+            "beginning_liability_pv": beginning_liability_pv,
+            "ending_liability_pv": ending_liability_pv,
+            "asset_return": asset_return,
+            "liability_discount_rate_change": liability_discount_rate_change,
+            "benefit_payments": benefit_payments,
+            "hedge_return": hedge_return,
+        }
+        try:
+            warm_up_backend(API_BASE_URL)
+            result = post_api_json(
+                API_BASE_URL,
+                "reporting/funding-attribution",
+                payload,
+            )
+        except requests.RequestException as exc:
+            st.error(render_backend_error("calculate attribution", exc))
+            return
+
+        columns = st.columns(3)
+        columns[0].metric(
+            "Beginning Funding Ratio",
+            f"{result['beginning_funding_ratio']:.2f}",
+        )
+        columns[1].metric("Ending Funding Ratio", f"{result['ending_funding_ratio']:.2f}")
+        columns[2].metric("Total Change", f"{result['total_change']:.2%}")
+
+        attribution_df = pd.DataFrame(
+            {
+                "Driver": [
+                    "Asset return",
+                    "Liability discount-rate",
+                    "Cash flow / benefits",
+                    "Hedge",
+                    "Residual",
+                ],
+                "Funding Ratio Contribution": [
+                    result["asset_return_contribution"],
+                    result["liability_discount_rate_contribution"],
+                    result["cash_flow_contribution"],
+                    result["hedge_contribution"],
+                    result["residual_contribution"],
+                ],
+            }
+        )
+        st.dataframe(attribution_df, use_container_width=True, hide_index=True)
+        fig = px.bar(
+            attribution_df,
+            x="Driver",
+            y="Funding Ratio Contribution",
+        )
+        fig.update_layout(yaxis_tickformat=".2%")
+        st.plotly_chart(fig, use_container_width=True)
 
 
 def build_liability_payload(

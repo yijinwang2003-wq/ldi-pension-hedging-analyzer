@@ -43,6 +43,10 @@ def main() -> None:
             maturity_years=maturity_years,
         )
 
+    st.divider()
+    st.header("Hedge Effectiveness Summary")
+    render_hedge_effectiveness_section(liability_dv01=liability_dv01)
+
 
 def render_inputs() -> tuple[float, float, float, int]:
     """Render hedge optimizer input controls."""
@@ -164,6 +168,94 @@ def render_risk_chart(before_hedge_risk: float, after_hedge_risk: float) -> None
     )
     fig.update_layout(yaxis_tickprefix="$", yaxis_tickformat=",.0f")
     st.plotly_chart(fig, use_container_width=True)
+
+
+def render_hedge_effectiveness_section(liability_dv01: float) -> None:
+    """Render hedge effectiveness controls and metrics."""
+    left, right = st.columns(2)
+    with left:
+        hedge_dv01 = st.number_input(
+            "Hedging Portfolio DV01",
+            min_value=0.0,
+            value=3_900.0,
+            step=100.0,
+            format="%.2f",
+        )
+        asset_market_value = st.number_input(
+            "Total Assets",
+            min_value=0.0,
+            value=5_200_000.0,
+            step=100_000.0,
+            format="%.2f",
+        )
+    with right:
+        liability_pv = st.number_input(
+            "Liability PV",
+            min_value=1.0,
+            value=5_600_000.0,
+            step=100_000.0,
+            format="%.2f",
+        )
+        target_hedge_ratio = st.number_input(
+            "Target Hedge Ratio",
+            min_value=0.0,
+            value=0.90,
+            step=0.05,
+            format="%.2f",
+        )
+        swap_dv01_per_notional = st.number_input(
+            "Swap DV01 per $1 Notional",
+            min_value=0.0,
+            value=0.0005,
+            step=0.0001,
+            format="%.6f",
+        )
+
+    if st.button("Calculate Hedge Effectiveness"):
+        payload = {
+            "liability_dv01": liability_dv01,
+            "hedge_dv01": hedge_dv01,
+            "asset_market_value": asset_market_value,
+            "liability_pv": liability_pv,
+            "target_hedge_ratio": target_hedge_ratio,
+            "swap_dv01_per_notional": swap_dv01_per_notional,
+        }
+        try:
+            warm_up_backend(API_BASE_URL)
+            result = post_api_json(API_BASE_URL, "hedging/effectiveness", payload)
+        except requests.RequestException as exc:
+            st.error(render_backend_error("calculate hedge effectiveness", exc))
+            return
+
+        columns = st.columns(4)
+        columns[0].metric("Hedge Ratio", f"{result['hedge_ratio']:.0%}")
+        columns[1].metric("Percent Hedged", f"{result['percent_hedged']:.0%}")
+        columns[2].metric("Residual DV01", f"${result['residual_dv01']:,.2f}")
+        required_notional = result["required_incremental_notional"]
+        columns[3].metric(
+            "IRS Notional to Target",
+            "N/A" if required_notional is None else f"${required_notional:,.2f}",
+        )
+        st.info(result["recommendation"])
+
+        sensitivity_df = pd.DataFrame(result["funding_ratio_sensitivity"]).T
+        st.dataframe(sensitivity_df, use_container_width=True)
+        chart_df = sensitivity_df.reset_index(names="Shock")[
+            ["Shock", "unhedged_change", "hedged_change"]
+        ].melt(
+            id_vars="Shock",
+            var_name="Measure",
+            value_name="Funding Ratio Change",
+        )
+        fig = px.bar(
+            chart_df,
+            x="Shock",
+            y="Funding Ratio Change",
+            color="Measure",
+            barmode="group",
+        )
+        fig.update_layout(yaxis_tickformat=".2%")
+        st.plotly_chart(fig, use_container_width=True)
 
 
 if __name__ == "__main__":

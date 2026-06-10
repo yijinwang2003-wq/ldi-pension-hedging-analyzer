@@ -34,7 +34,7 @@ def main() -> None:
 
     st.title("Scenario Analysis")
 
-    st.header("Inputs")
+    st.header("Vasicek Monte Carlo Inputs")
     kappa, theta, sigma, r0, years, n_paths = render_inputs()
 
     if st.button("Generate Monte Carlo Paths", type="primary"):
@@ -46,6 +46,14 @@ def main() -> None:
             years=years,
             n_paths=n_paths,
         )
+
+    st.divider()
+    st.header("Curve Twist Scenarios")
+    render_curve_twist_section()
+
+    st.divider()
+    st.header("Nelson-Siegel Curve Builder")
+    render_nelson_siegel_section()
 
 
 def render_inputs() -> tuple[float, float, float, float, float, int]:
@@ -191,6 +199,192 @@ def render_summary_metrics(summary: dict[str, float]) -> None:
     columns[2].metric("5%", f"{summary['5%']:.2%}")
     columns[3].metric("Median", f"{summary['50%']:.2%}")
     columns[4].metric("95%", f"{summary['95%']:.2%}")
+
+
+def render_curve_twist_section() -> None:
+    """Render curve-shape scenario inputs and results."""
+    default_cash_flows = pd.DataFrame(
+        {
+            "year": [1, 5, 10],
+            "cash_flow": [1_000_000.0, 1_250_000.0, 1_500_000.0],
+        }
+    )
+    default_curve = pd.DataFrame(
+        {
+            "year": [1, 5, 10],
+            "discount_rate": [0.040, 0.043, 0.047],
+        }
+    )
+    default_custom_shocks = pd.DataFrame(
+        {"year": [1, 5, 10], "shock_bps": [0.0, 50.0, 100.0]}
+    )
+
+    top_left, top_right = st.columns(2)
+    with top_left:
+        asset_market_value = st.number_input(
+            "Scenario Total Assets",
+            min_value=0.0,
+            value=3_600_000.0,
+            step=100_000.0,
+            format="%.2f",
+        )
+        hedge_dv01 = st.number_input(
+            "Scenario Hedge DV01",
+            value=2_000.0,
+            step=100.0,
+            format="%.2f",
+        )
+    with top_right:
+        use_custom_shock = st.checkbox("Include custom key-rate shock", value=True)
+
+    left, middle, right = st.columns(3)
+    with left:
+        st.subheader("Cash Flows")
+        cash_flow_df = st.data_editor(
+            default_cash_flows,
+            num_rows="dynamic",
+            use_container_width=True,
+            hide_index=True,
+            key="curve_twist_cash_flows",
+        )
+    with middle:
+        st.subheader("Discount Curve")
+        curve_df = st.data_editor(
+            default_curve,
+            num_rows="dynamic",
+            use_container_width=True,
+            hide_index=True,
+            key="curve_twist_curve",
+        )
+    with right:
+        st.subheader("Custom Shock")
+        custom_shock_df = st.data_editor(
+            default_custom_shocks,
+            num_rows="dynamic",
+            use_container_width=True,
+            hide_index=True,
+            disabled=not use_custom_shock,
+            key="curve_twist_custom",
+        )
+
+    if st.button("Run Curve Twists"):
+        payload = {
+            "cash_flows": dataframe_to_dict(cash_flow_df, "cash_flow"),
+            "discount_curve": dataframe_to_dict(curve_df, "discount_rate"),
+            "asset_market_value": asset_market_value,
+            "hedge_dv01": hedge_dv01,
+        }
+        if use_custom_shock:
+            payload["custom_shocks_bps"] = dataframe_to_dict(
+                custom_shock_df,
+                "shock_bps",
+            )
+
+        try:
+            warm_up_backend(API_BASE_URL)
+            result = post_api_json(API_BASE_URL, "scenarios/curve-twists", payload)
+        except requests.RequestException as exc:
+            st.error(render_backend_error("run curve twist scenarios", exc))
+            return
+
+        results_df = pd.DataFrame(result["results"]).drop(columns=["shocks_bps"])
+        st.dataframe(
+            results_df,
+            use_container_width=True,
+            hide_index=True,
+        )
+        chart_df = results_df[
+            [
+                "scenario",
+                "funding_ratio_change_unhedged",
+                "funding_ratio_change_hedged",
+            ]
+        ].melt(
+            id_vars="scenario",
+            var_name="Measure",
+            value_name="Funding Ratio Change",
+        )
+        fig = px.bar(
+            chart_df,
+            x="scenario",
+            y="Funding Ratio Change",
+            color="Measure",
+            barmode="group",
+        )
+        fig.update_layout(yaxis_tickformat=".2%")
+        st.plotly_chart(fig, use_container_width=True)
+
+
+def render_nelson_siegel_section() -> None:
+    """Render Nelson-Siegel market-point fitting controls."""
+    default_market_points = pd.DataFrame(
+        {
+            "maturity": [1.0, 2.0, 5.0, 10.0, 30.0],
+            "rate": [0.038, 0.039, 0.041, 0.044, 0.047],
+        }
+    )
+    left, right = st.columns([2, 1])
+    with left:
+        market_df = st.data_editor(
+            default_market_points,
+            num_rows="dynamic",
+            use_container_width=True,
+            hide_index=True,
+            key="nelson_siegel_market",
+        )
+    with right:
+        use_fixed_tau = st.checkbox("Use fixed tau", value=True)
+        tau = st.number_input(
+            "Tau",
+            min_value=0.1,
+            value=2.5,
+            step=0.1,
+            format="%.2f",
+            disabled=not use_fixed_tau,
+        )
+        max_year = st.number_input("Output Years", min_value=1, value=30, step=1)
+
+    if st.button("Build Nelson-Siegel Curve"):
+        clean_df = market_df.dropna(subset=["maturity", "rate"]).copy()
+        payload = {
+            "maturities": clean_df["maturity"].astype(float).tolist(),
+            "rates": clean_df["rate"].astype(float).tolist(),
+            "tau": tau if use_fixed_tau else None,
+            "output_years": list(range(1, int(max_year) + 1)),
+        }
+        try:
+            warm_up_backend(API_BASE_URL)
+            result = post_api_json(API_BASE_URL, "scenarios/nelson-siegel", payload)
+        except requests.RequestException as exc:
+            st.error(render_backend_error("build Nelson-Siegel curve", exc))
+            return
+
+        params = result["parameters"]
+        columns = st.columns(4)
+        columns[0].metric("Beta 0", f"{params['beta0']:.4f}")
+        columns[1].metric("Beta 1", f"{params['beta1']:.4f}")
+        columns[2].metric("Beta 2", f"{params['beta2']:.4f}")
+        columns[3].metric("Tau", f"{params['tau']:.2f}")
+
+        curve_df = pd.DataFrame(
+            {
+                "Year": [int(year) for year in result["discount_curve"].keys()],
+                "Rate": [float(rate) for rate in result["discount_curve"].values()],
+            }
+        )
+        fig = px.line(curve_df, x="Year", y="Rate", markers=True)
+        fig.update_layout(yaxis_tickformat=".2%")
+        st.plotly_chart(fig, use_container_width=True)
+        st.dataframe(curve_df, use_container_width=True, hide_index=True)
+
+
+def dataframe_to_dict(dataframe: pd.DataFrame, value_column: str) -> dict[int, float]:
+    """Convert a year/value Streamlit table into an API dictionary."""
+    clean_df = dataframe.dropna(subset=["year", value_column]).copy()
+    clean_df["year"] = pd.to_numeric(clean_df["year"], errors="coerce")
+    clean_df[value_column] = pd.to_numeric(clean_df[value_column], errors="coerce")
+    clean_df = clean_df.dropna(subset=["year", value_column])
+    return dict(zip(clean_df["year"].astype(int), clean_df[value_column].astype(float)))
 
 
 if __name__ == "__main__":
