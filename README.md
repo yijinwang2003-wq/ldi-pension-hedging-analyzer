@@ -78,6 +78,8 @@ Built with:
 - Curve twist scenarios: Parallel +100bp, Parallel -100bp, Bear Steepener, Bull Flattener
 - Optional custom key-rate shocks
 - Nelson-Siegel curve fitting and smooth annual curve generation
+- Historical stress testing for 2008, 2020 COVID, and 2022 Fed hiking scenarios
+- Hedged versus unhedged funding-ratio comparison under historical shocks
 
 ### Funding Status
 
@@ -97,6 +99,16 @@ Built with:
 - Funding status charts
 - Asset return, liability discount-rate, cash-flow, hedge, and residual attribution
 - Methodology section
+- Historical stress results and glide path recommendation
+- Recommended hedge adjustments under funded-status policy
+
+### Real-World LDI Strategy Suite
+
+- Historical stress testing with hardcoded market regimes
+- Glide path advisor for funded-status-based de-risking
+- CSV Upload Center with validation and downloadable templates
+- Uploaded cash flows and KRD profiles reused across analysis modules
+- Client-report narratives tying hedge design, stress outcomes, and glide path policy together
 
 ---
 
@@ -135,9 +147,13 @@ ldi-pension-analyzer/
 │   └── models/
 │       ├── liability.py
 │       ├── hedging.py
+│       ├── historical_stress.py
+│       ├── glide_path.py
 │       ├── multi_hedge.py
 │       ├── scenarios.py
 │       └── portfolio.py
+│   └── utils/
+│       └── csv_loader.py
 ├── frontend/
 │   ├── Dockerfile
 │   ├── app.py
@@ -147,9 +163,14 @@ ldi-pension-analyzer/
 │       ├── 3_Scenario_Analysis.py    # Vasicek Monte Carlo, stress scenarios
 │       ├── 4_Funding_Status.py       # Growth/Hedging split, funding ratio, surplus
 │       ├── 5_Client_Report.py        # PDF/CSV quarterly report generation
-│       └── 6_Multi_Instrument_Hedge_Optimizer.py
+│       ├── 6_Multi_Instrument_Hedge_Optimizer.py
+│       ├── 7_Glide_Path_Advisor.py
+│       └── 8_CSV_Upload_Center.py
 ├── tests/
 │   ├── test_liability.py
+│   ├── test_historical_stress.py
+│   ├── test_glide_path.py
+│   ├── test_csv_loader.py
 │   ├── test_multi_hedge.py
 │   └── test_hedging.py
 ├── docker-compose.yml
@@ -453,6 +474,37 @@ Response excerpt:
 }
 ```
 
+### Glide Path Advisor
+
+```http
+POST /api/hedging/glide-path
+```
+
+Request:
+
+```json
+{
+  "funding_ratio": 0.92,
+  "current_hedge_ratio": 0.68,
+  "liability_dv01": 1000000,
+  "current_hedge_portfolio_dv01": 680000,
+  "dv01_per_notional": 0.0005
+}
+```
+
+Response excerpt:
+
+```json
+{
+  "funding_ratio": 0.92,
+  "current_hedge_ratio": 0.68,
+  "target_hedge_ratio": 0.80,
+  "additional_dv01_needed": 120000,
+  "suggested_notional_change": 240000000,
+  "recommended_action": "Increase hedge allocation"
+}
+```
+
 ### Multi-Instrument Hedge Optimization
 
 ```http
@@ -523,6 +575,52 @@ Default universe endpoint:
 
 ```http
 GET /api/hedging/multi-instrument/universe
+```
+
+### Historical Stress Testing
+
+```http
+POST /api/scenarios/historical-stress
+```
+
+Request:
+
+```json
+{
+  "liability_krd": {
+    "2Y": 50000,
+    "5Y": 150000,
+    "10Y": 400000,
+    "20Y": 350000,
+    "30Y": 250000
+  },
+  "hedge_krd": {
+    "2Y": -25000,
+    "5Y": -100000,
+    "10Y": -325000,
+    "20Y": -275000,
+    "30Y": -200000
+  },
+  "asset_market_value": 1000000000,
+  "liability_pv": 1000000000
+}
+```
+
+Response excerpt:
+
+```json
+{
+  "results": [
+    {
+      "scenario": "2008 Financial Crisis (Oct 2008)",
+      "funding_ratio_before": 1.0,
+      "funding_ratio_after_hedged": 0.97,
+      "funding_ratio_after_unhedged": 0.88,
+      "liability_change": 152000000,
+      "hedge_change": 101000000
+    }
+  ]
+}
 ```
 
 ### Nelson-Siegel Curve Builder
@@ -773,6 +871,57 @@ The model solves nonnegative instrument multipliers. SciPy can be enabled with
 is used. Outputs include recommended notional, hedge ratio, residual KRD by
 bucket, residual risk score, single-DV01 comparison, and stress-test results.
 
+### HistoricalStressTester
+
+Located in:
+
+```text
+backend/models/historical_stress.py
+```
+
+Runs hardcoded real-world rate shock regimes:
+
+- 2008 Financial Crisis
+- 2020 COVID Shock
+- 2022 Fed Hiking Cycle
+
+For each scenario, the model reports liability PV change, asset value change,
+hedge portfolio change, funding ratio before, funding ratio after unhedged, and
+funding ratio after hedged. This is intended to demonstrate how an LDI hedge
+would have behaved during market regimes an institutional interviewer will
+recognize.
+
+### GlidePathAdvisor
+
+Located in:
+
+```text
+backend/models/glide_path.py
+```
+
+Applies a simple de-risking policy:
+
+- Funding ratio below 80% maps to a 40% target hedge ratio.
+- Funding ratio from 80%-90% maps to a 65% target hedge ratio.
+- Funding ratio from 90%-100% maps to an 80% target hedge ratio.
+- Funding ratio above 100% maps to a 95% target hedge ratio.
+
+The output includes target hedge ratio, hedge ratio gap, additional DV01 needed,
+optional notional change, recommended action, policy curve, and narrative.
+
+### CSV Loader Utilities
+
+Located in:
+
+```text
+backend/utils/csv_loader.py
+```
+
+Reusable CSV parsers validate and normalize liability cash flows, liability KRD
+profiles, and asset holdings. The frontend upload center stores parsed data in
+session state so uploaded cash flows and KRD profiles can populate existing
+analysis pages.
+
 ### FundingAttribution
 
 Located in:
@@ -816,6 +965,7 @@ Features:
 
 - Editable cash-flow table
 - Editable discount-curve table
+- Uses uploaded liability cash flows from CSV Upload Center when available
 - Calls FastAPI liability endpoints
 - Displays Present Value, Macaulay Duration, Modified Duration, and DV01
 - Displays Key-Rate DV01 by maturity bucket
@@ -850,6 +1000,8 @@ Features:
 - Terminal rate histogram
 - Mean, standard deviation, 5%, median, and 95% terminal-rate metrics
 - Curve Twist Scenarios section with hedged vs unhedged funding-ratio comparison
+- Historical Stress Testing section with hedged/unhedged funded-status comparison
+- Scenario ranking by hedged funding-ratio severity
 - Nelson-Siegel Curve Builder section with fitted parameters, chart, and generated curve table
 
 ### Funding Status
@@ -887,6 +1039,7 @@ Features:
 - Includes portfolio allocation, branded executive summary, metric table, interpretation, charts, and methodology
 - Includes period-over-period funding-ratio attribution in CSV and PDF downloads
 - Includes multi-instrument hedge allocation, KRD mismatch, stress comparison, and recommendation
+- Includes historical stress results, glide path recommendation, and hedge adjustment narrative
 
 ### Multi-Instrument Hedge Optimizer
 
@@ -897,12 +1050,42 @@ frontend/pages/6_Multi_Instrument_Hedge_Optimizer.py
 Features:
 
 - Editable liability KRD profile
+- Uses uploaded liability KRD profile from CSV Upload Center when available
 - Editable hedge instrument universe with include/exclude controls
 - Optimized allocation table
 - Liability versus hedge KRD chart
 - Residual KRD chart
 - Single DV01 hedge versus multi-instrument KRD stress comparison
 - Narrative recommendation summary
+
+### Glide Path Advisor
+
+```text
+frontend/pages/7_Glide_Path_Advisor.py
+```
+
+Features:
+
+- Current funding ratio and hedge ratio inputs
+- Target hedge ratio from funded-status policy bands
+- Additional DV01 and optional notional gap
+- Recommended action and narrative explanation
+- Funding ratio to target hedge ratio policy curve
+
+### CSV Upload Center
+
+```text
+frontend/pages/8_CSV_Upload_Center.py
+```
+
+Features:
+
+- Downloadable liability cash-flow, liability KRD, and asset-holdings templates
+- CSV validation with clear error messages
+- Uploads stored in Streamlit session state
+- Uploaded cash flows populate Liability Analysis
+- Uploaded KRD profiles populate Multi-Instrument Hedge Optimizer
+- Uploaded asset holdings populate Funding Status and Client Report asset defaults
 
 ---
 
@@ -971,6 +1154,11 @@ Current test coverage includes:
 - Residual KRD improvement versus unhedged exposure
 - Multi-instrument hedge outperformance versus single DV01 hedge
 - Multi-hedge stress scenario calculations
+- Historical stress scenario calculations
+- Historical hedged versus unhedged funding-ratio comparison
+- Glide path policy band recommendations
+- Glide path DV01 and notional gap calculations
+- CSV upload parsing and validation
 
 ---
 
@@ -986,6 +1174,10 @@ Current test coverage includes:
 - Multi-instrument hedge instruments use negative DV01/KRD to offset positive liability DV01/KRD.
 - Multi-hedge allocation multipliers are constrained to be nonnegative.
 - Single-DV01 comparison uses the selected instrument with the largest absolute DV01.
+- Historical stress scenarios are hardcoded educational approximations, not live market data.
+- Historical stress applies KRD shocks as DV01 times basis-point shock.
+- Glide path targets are simple policy bands designed for demonstration.
+- CSV uploads are stored in Streamlit session state for reuse during the current app session.
 - Nelson-Siegel fitting uses NumPy least squares and a simple tau grid search when tau is not fixed.
 - Funding attribution is a reporting bridge, not a full actuarial roll-forward.
 - Interest-rate swap payments are annual.
@@ -1002,7 +1194,7 @@ Potential next improvements:
 - Add end-to-end tests for the Streamlit flows.
 - Add end-to-end tests for FastAPI routes.
 - Support user-entered swap discount curves in the Hedge Optimizer.
-- Add CSV upload/export for liability cash flows.
+- Add persistent database-backed upload storage.
 - Add cloud deployment configuration for a hosted demo.
 
 ---
@@ -1023,6 +1215,12 @@ Potential next improvements:
   and residual.
 - Nelson-Siegel fitting demonstrates how market curve points can become a smooth
   discount curve while preserving manual curve input as a fallback.
+- Historical stress testing makes the hedge story concrete by replaying familiar
+  rate regimes and comparing hedged versus unhedged funding-ratio outcomes.
+- The glide path advisor simulates a real pension de-risking policy: as funded
+  status improves, the plan increases hedge ratios to lock in gains.
+- CSV upload support makes the demo feel like an institutional workflow where
+  cash-flow, KRD, and holdings data arrive from external systems.
 
 ## Real-World LDI Connection
 
@@ -1040,6 +1238,12 @@ problem. A single 10Y swap can match total DV01 while leaving 20Y-30Y exposure
 unhedged. A KRD optimizer can use both intermediate and long-duration
 instruments to reduce residual curve risk and improve funding-ratio stability
 under steepening and flattening shocks.
+
+The Real-World LDI Strategy Suite turns the platform into a decision-support
+workflow. Historical stress testing answers how the plan would behave in known
+market events. The glide path advisor links funded status to hedge policy. CSV
+uploads make the analytics reusable with plan-specific inputs. Together these
+features connect quant calculations to investment committee decisions.
 
 ---
 

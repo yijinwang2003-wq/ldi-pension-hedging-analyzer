@@ -57,6 +57,14 @@ def render_liability_inputs() -> tuple[pd.DataFrame, pd.DataFrame]:
             ],
         }
     )
+    if "uploaded_liability_cash_flows" in st.session_state:
+        uploaded_cash_flows = st.session_state["uploaded_liability_cash_flows"]
+        default_cash_flows = pd.DataFrame(
+            {
+                "year": list(uploaded_cash_flows.keys()),
+                "cash_flow": list(uploaded_cash_flows.values()),
+            }
+        )
     default_discount_curve = pd.DataFrame(
         {
             "year": [1, 2, 3, 4, 5],

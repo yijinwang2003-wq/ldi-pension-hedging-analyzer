@@ -52,6 +52,10 @@ def main() -> None:
     render_curve_twist_section()
 
     st.divider()
+    st.header("Historical Stress Testing")
+    render_historical_stress_section()
+
+    st.divider()
     st.header("Nelson-Siegel Curve Builder")
     render_nelson_siegel_section()
 
@@ -378,6 +382,112 @@ def render_nelson_siegel_section() -> None:
         st.dataframe(curve_df, use_container_width=True, hide_index=True)
 
 
+def render_historical_stress_section() -> None:
+    """Render historical stress test inputs and charts."""
+    default_liability_krd = pd.DataFrame(
+        {
+            "bucket": ["2Y", "5Y", "10Y", "20Y", "30Y"],
+            "liability_krd": [50_000.0, 150_000.0, 400_000.0, 350_000.0, 250_000.0],
+        }
+    )
+    default_hedge_krd = pd.DataFrame(
+        {
+            "bucket": ["2Y", "5Y", "10Y", "20Y", "30Y"],
+            "hedge_krd": [-25_000.0, -100_000.0, -325_000.0, -275_000.0, -200_000.0],
+        }
+    )
+
+    first, second = st.columns(2)
+    with first:
+        asset_market_value = st.number_input(
+            "Historical Stress Assets",
+            min_value=0.0,
+            value=1_000_000_000.0,
+            step=10_000_000.0,
+            format="%.2f",
+        )
+    with second:
+        liability_pv = st.number_input(
+            "Historical Stress Liability PV",
+            min_value=1.0,
+            value=1_000_000_000.0,
+            step=10_000_000.0,
+            format="%.2f",
+        )
+
+    left, right = st.columns(2)
+    with left:
+        st.subheader("Liability KRD")
+        liability_krd_df = st.data_editor(
+            default_liability_krd,
+            num_rows="dynamic",
+            use_container_width=True,
+            hide_index=True,
+            key="historical_liability_krd",
+        )
+    with right:
+        st.subheader("Hedge KRD")
+        hedge_krd_df = st.data_editor(
+            default_hedge_krd,
+            num_rows="dynamic",
+            use_container_width=True,
+            hide_index=True,
+            key="historical_hedge_krd",
+        )
+
+    if st.button("Run Historical Stress Tests"):
+        payload = {
+            "liability_krd": bucket_dataframe_to_dict(
+                liability_krd_df,
+                "liability_krd",
+            ),
+            "hedge_krd": bucket_dataframe_to_dict(hedge_krd_df, "hedge_krd"),
+            "asset_market_value": asset_market_value,
+            "liability_pv": liability_pv,
+        }
+        try:
+            warm_up_backend(API_BASE_URL)
+            result = post_api_json(API_BASE_URL, "scenarios/historical-stress", payload)
+        except requests.RequestException as exc:
+            st.error(render_backend_error("run historical stress tests", exc))
+            return
+
+        results_df = pd.DataFrame(result["results"])
+        st.dataframe(results_df, use_container_width=True, hide_index=True)
+
+        comparison_df = results_df[
+            [
+                "scenario",
+                "funding_ratio_before",
+                "funding_ratio_after_unhedged",
+                "funding_ratio_after_hedged",
+            ]
+        ].melt(
+            id_vars="scenario",
+            var_name="Measure",
+            value_name="Funding Ratio",
+        )
+        comparison_fig = px.bar(
+            comparison_df,
+            x="scenario",
+            y="Funding Ratio",
+            color="Measure",
+            barmode="group",
+        )
+        comparison_fig.update_layout(yaxis_tickformat=".2%")
+        st.plotly_chart(comparison_fig, use_container_width=True)
+
+        severity_df = pd.DataFrame(result["ranked_by_severity"])
+        severity_fig = px.bar(
+            severity_df,
+            x="scenario",
+            y="hedged_funding_ratio_change",
+            labels={"hedged_funding_ratio_change": "Hedged Funding Ratio Change"},
+        )
+        severity_fig.update_layout(yaxis_tickformat=".2%")
+        st.plotly_chart(severity_fig, use_container_width=True)
+
+
 def dataframe_to_dict(dataframe: pd.DataFrame, value_column: str) -> dict[int, float]:
     """Convert a year/value Streamlit table into an API dictionary."""
     clean_df = dataframe.dropna(subset=["year", value_column]).copy()
@@ -385,6 +495,17 @@ def dataframe_to_dict(dataframe: pd.DataFrame, value_column: str) -> dict[int, f
     clean_df[value_column] = pd.to_numeric(clean_df[value_column], errors="coerce")
     clean_df = clean_df.dropna(subset=["year", value_column])
     return dict(zip(clean_df["year"].astype(int), clean_df[value_column].astype(float)))
+
+
+def bucket_dataframe_to_dict(
+    dataframe: pd.DataFrame,
+    value_column: str,
+) -> dict[str, float]:
+    """Convert a bucket/value table into an API dictionary."""
+    clean_df = dataframe.dropna(subset=["bucket", value_column]).copy()
+    clean_df[value_column] = pd.to_numeric(clean_df[value_column], errors="coerce")
+    clean_df = clean_df.dropna(subset=[value_column])
+    return dict(zip(clean_df["bucket"].astype(str), clean_df[value_column].astype(float)))
 
 
 if __name__ == "__main__":

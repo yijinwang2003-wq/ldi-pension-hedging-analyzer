@@ -62,6 +62,7 @@ def main() -> None:
 
 def render_inputs() -> tuple[float, float, float, pd.DataFrame, pd.DataFrame]:
     """Render funding status inputs and editable liability tables."""
+    uploaded_assets_total = uploaded_asset_holdings_total()
     left, right = st.columns(2)
 
     with left:
@@ -69,7 +70,7 @@ def render_inputs() -> tuple[float, float, float, pd.DataFrame, pd.DataFrame]:
         equities = st.number_input(
             "Equities",
             min_value=0.0,
-            value=3_000_000.0,
+            value=uploaded_assets_total or 3_000_000.0,
             step=100_000.0,
             format="%.2f",
         )
@@ -305,6 +306,12 @@ def funding_ratio_color(funding_ratio: float) -> str:
     if funding_ratio >= 0.90:
         return "#ca8a04"
     return "#dc2626"
+
+
+def uploaded_asset_holdings_total() -> float:
+    """Return uploaded asset holdings total from session state, if available."""
+    holdings = st.session_state.get("uploaded_asset_holdings", [])
+    return sum(float(row["market_value"]) for row in holdings)
 
 
 def render_portfolio_allocation_pie_chart(

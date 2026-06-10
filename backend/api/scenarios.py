@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from backend.models.curve import CurveScenario, CurveScenarioAnalyzer, NelsonSiegelCurve
+from backend.models.historical_stress import HistoricalStressTester
 from backend.models.scenarios import VasicekModel
 
 
@@ -109,6 +110,32 @@ class NelsonSiegelResponse(BaseModel):
     discount_curve: dict[int, float]
 
 
+class HistoricalStressRequest(BaseModel):
+    """Request payload for historical funded-status stress testing."""
+
+    liability_krd: dict[str, float] = Field(
+        ...,
+        example={"2Y": 50_000.0, "5Y": 150_000.0, "10Y": 400_000.0},
+    )
+    hedge_krd: dict[str, float] | None = Field(
+        None,
+        example={"2Y": -20_000.0, "5Y": -100_000.0, "10Y": -300_000.0},
+    )
+    asset_market_value: float = Field(100_000_000.0, example=100_000_000.0)
+    liability_pv: float = Field(100_000_000.0, example=100_000_000.0)
+    asset_return_shocks: dict[str, float] | None = Field(
+        None,
+        description="Optional non-hedging asset return shock by scenario name.",
+    )
+
+
+class HistoricalStressResponse(BaseModel):
+    """Response payload for historical funded-status stress testing."""
+
+    results: list[dict[str, float | str]]
+    ranked_by_severity: list[dict[str, float | str]]
+
+
 @router.post("/vasicek", response_model=VasicekResponse)
 def simulate_vasicek(request: VasicekRequest) -> VasicekResponse:
     """Simulate Vasicek short-rate paths and summarize terminal rates."""
@@ -175,4 +202,28 @@ def fit_nelson_siegel(request: NelsonSiegelRequest) -> NelsonSiegelResponse:
     return NelsonSiegelResponse(
         parameters=parameters,
         discount_curve=discount_curve,
+    )
+
+
+@router.post("/historical-stress", response_model=HistoricalStressResponse)
+def run_historical_stress(
+    request: HistoricalStressRequest,
+) -> HistoricalStressResponse:
+    """Run hardcoded historical rate scenarios against funded status."""
+    try:
+        tester = HistoricalStressTester(
+            liability_krd=request.liability_krd,
+            hedge_krd=request.hedge_krd,
+            asset_market_value=request.asset_market_value,
+            liability_pv=request.liability_pv,
+            asset_return_shocks=request.asset_return_shocks,
+        )
+        results = tester.run()
+        ranked_by_severity = tester.ranked_by_severity()
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return HistoricalStressResponse(
+        results=results,
+        ranked_by_severity=ranked_by_severity,
     )

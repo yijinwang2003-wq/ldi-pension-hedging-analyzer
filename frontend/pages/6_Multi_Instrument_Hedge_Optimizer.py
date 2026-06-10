@@ -197,6 +197,15 @@ def render_recommendation_summary(result: dict[str, object]) -> None:
 
 def default_liability_krd() -> pd.DataFrame:
     """Return default liability KRD profile."""
+    if "uploaded_liability_krd" in st.session_state:
+        uploaded_krd = st.session_state["uploaded_liability_krd"]
+        return pd.DataFrame(
+            {
+                "bucket": list(uploaded_krd.keys()),
+                "liability_krd": list(uploaded_krd.values()),
+            }
+        )
+
     return pd.DataFrame(
         {
             "bucket": KRD_BUCKETS,

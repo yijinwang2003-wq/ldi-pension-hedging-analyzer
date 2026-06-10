@@ -84,6 +84,7 @@ def render_inputs() -> tuple[
     dict[str, float],
 ]:
     """Render client report inputs and editable liability tables."""
+    uploaded_assets_total = uploaded_asset_holdings_total()
     left, right = st.columns(2)
     with left:
         client_name = st.text_input("Client Name", value="Sample Pension Plan")
@@ -96,7 +97,7 @@ def render_inputs() -> tuple[
         equities = st.number_input(
             "Equities",
             min_value=0.0,
-            value=3_000_000.0,
+            value=uploaded_assets_total or 3_000_000.0,
             step=100_000.0,
             format="%.2f",
         )
@@ -299,9 +300,17 @@ def generate_client_report(
     if payload is None:
         return
 
+    portfolio_data = portfolio.as_dict()
+    asset_market_value = portfolio.total_assets()
+
     try:
         warm_up_backend(API_BASE_URL)
         present_value = post_liability_endpoint("pv", payload)
+        liability_pv = present_value["present_value"]
+        if liability_pv == 0.0:
+            st.error("Funding ratio is undefined when liability PV is zero.")
+            return
+
         dv01 = post_liability_endpoint("dv01", payload)
         duration = post_liability_endpoint("duration", payload)
         attribution = post_api_json(
@@ -317,17 +326,26 @@ def generate_client_report(
                 liability_pv=liability_pv,
             ),
         )
+        historical_stress = post_api_json(
+            API_BASE_URL,
+            "scenarios/historical-stress",
+            default_historical_stress_payload(
+                asset_market_value=asset_market_value,
+                liability_pv=liability_pv,
+            ),
+        )
+        glide_path = post_api_json(
+            API_BASE_URL,
+            "hedging/glide-path",
+            default_glide_path_payload(
+                funding_ratio=asset_market_value / liability_pv,
+                liability_dv01=dv01["dv01"],
+            ),
+        )
     except requests.RequestException as exc:
         st.error(render_backend_error("generate client report", exc))
         return
 
-    liability_pv = present_value["present_value"]
-    if liability_pv == 0.0:
-        st.error("Funding ratio is undefined when liability PV is zero.")
-        return
-
-    portfolio_data = portfolio.as_dict()
-    asset_market_value = portfolio.total_assets()
     report_data = {
         "client_name": client_name,
         "report_date": report_date.isoformat(),
@@ -351,11 +369,15 @@ def generate_client_report(
         "multi_hedge_allocations": multi_hedge["recommended_allocations"],
         "multi_hedge_residual_krd": multi_hedge["residual_krd"],
         "multi_hedge_stress_results": multi_hedge["stress_results"],
+        "historical_stress_results": historical_stress["results"],
+        "historical_stress_ranked": historical_stress["ranked_by_severity"],
+        "glide_path_recommendation": glide_path,
     }
 
     render_metrics(report_data)
     render_attribution_summary(report_data)
     render_multi_hedge_summary(report_data)
+    render_strategy_suite_summary(report_data)
     render_visualization(report_data)
     render_downloads(report_data)
 
@@ -482,6 +504,32 @@ def render_multi_hedge_summary(report_data: dict[str, object]) -> None:
     )
     st.dataframe(
         build_multi_hedge_stress_dataframe(report_data),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+
+def render_strategy_suite_summary(report_data: dict[str, object]) -> None:
+    """Render historical stress and glide path recommendation."""
+    st.subheader("Real-World LDI Strategy Suite")
+    glide_path = dict(report_data["glide_path_recommendation"])
+    columns = st.columns(4)
+    columns[0].metric(
+        "Glide Path Target",
+        f"{float(glide_path['target_hedge_ratio']):.0%}",
+    )
+    columns[1].metric(
+        "Current Hedge Ratio",
+        f"{float(glide_path['current_hedge_ratio']):.0%}",
+    )
+    columns[2].metric(
+        "Additional DV01",
+        f"${float(glide_path['additional_dv01_needed']):,.0f}",
+    )
+    columns[3].metric("Action", str(glide_path["recommended_action"]))
+    st.info(str(glide_path["narrative"]))
+    st.dataframe(
+        build_historical_stress_dataframe(report_data),
         use_container_width=True,
         hide_index=True,
     )
@@ -696,6 +744,46 @@ def create_pdf_report(report_data: dict[str, float | str]) -> bytes:
     elements.append(allocation_table)
     elements.append(Spacer(1, 12))
 
+    elements.append(Paragraph("Historical Stress Testing", styles["Heading2"]))
+    historical_rows = [
+        [
+            "Scenario",
+            "Before",
+            "After Unhedged",
+            "After Hedged",
+            "Hedge Change",
+        ]
+    ]
+    for row in build_historical_stress_dataframe(report_data).itertuples(index=False):
+        historical_rows.append(
+            [
+                row.Scenario,
+                f"{float(row.Before):.2%}",
+                f"{float(row.After_Unhedged):.2%}",
+                f"{float(row.After_Hedged):.2%}",
+                format_currency(float(row.Hedge_Change)),
+            ]
+        )
+    historical_table = Table(historical_rows)
+    historical_table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
+                ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("ALIGN", (1, 1), (-1, -1), "RIGHT"),
+                ("PADDING", (0, 0), (-1, -1), 6),
+            ]
+        )
+    )
+    elements.append(historical_table)
+    elements.append(Spacer(1, 12))
+
+    glide_path = dict(report_data["glide_path_recommendation"])
+    elements.append(Paragraph("Glide Path Recommendation", styles["Heading2"]))
+    elements.append(Paragraph(str(glide_path["narrative"]), styles["Normal"]))
+    elements.append(Spacer(1, 12))
+
     elements.append(Paragraph("Interpretation", styles["Heading2"]))
     elements.append(Paragraph(funding_interpretation(float(report_data["funding_ratio"])), styles["Normal"]))
     elements.append(Spacer(1, 12))
@@ -842,6 +930,12 @@ def funding_interpretation(funding_ratio: float) -> str:
     return "Plan is materially underfunded."
 
 
+def uploaded_asset_holdings_total() -> float:
+    """Return uploaded asset holdings total from session state, if available."""
+    holdings = st.session_state.get("uploaded_asset_holdings", [])
+    return sum(float(row["market_value"]) for row in holdings)
+
+
 def format_currency(value: float) -> str:
     """Format a number as US currency."""
     return f"${value:,.2f}"
@@ -914,6 +1008,23 @@ def build_multi_hedge_stress_dataframe(report_data: dict[str, object]) -> pd.Dat
     return pd.DataFrame(rows)
 
 
+def build_historical_stress_dataframe(report_data: dict[str, object]) -> pd.DataFrame:
+    """Return historical stress results for display and PDF output."""
+    rows = []
+    for row in list(report_data["historical_stress_results"]):
+        rows.append(
+            {
+                "Scenario": row["scenario"],
+                "Before": float(row["funding_ratio_before"]),
+                "After_Unhedged": float(row["funding_ratio_after_unhedged"]),
+                "After_Hedged": float(row["funding_ratio_after_hedged"]),
+                "Liability_Change": float(row["liability_change"]),
+                "Hedge_Change": float(row["hedge_change"]),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
 def default_multi_hedge_payload(
     asset_market_value: float,
     liability_pv: float,
@@ -929,6 +1040,47 @@ def default_multi_hedge_payload(
         },
         "asset_market_value": asset_market_value,
         "liability_pv": liability_pv,
+    }
+
+
+def default_historical_stress_payload(
+    asset_market_value: float,
+    liability_pv: float,
+) -> dict[str, object]:
+    """Return report-ready historical stress inputs."""
+    scale = liability_pv / 1_000_000_000.0
+    return {
+        "liability_krd": {
+            "2Y": 50_000.0 * scale,
+            "5Y": 150_000.0 * scale,
+            "10Y": 400_000.0 * scale,
+            "20Y": 350_000.0 * scale,
+            "30Y": 250_000.0 * scale,
+        },
+        "hedge_krd": {
+            "2Y": -25_000.0 * scale,
+            "5Y": -100_000.0 * scale,
+            "10Y": -325_000.0 * scale,
+            "20Y": -275_000.0 * scale,
+            "30Y": -200_000.0 * scale,
+        },
+        "asset_market_value": asset_market_value,
+        "liability_pv": liability_pv,
+    }
+
+
+def default_glide_path_payload(
+    funding_ratio: float,
+    liability_dv01: float,
+) -> dict[str, object]:
+    """Return report-ready glide path recommendation inputs."""
+    current_hedge_ratio = 0.68
+    return {
+        "funding_ratio": funding_ratio,
+        "current_hedge_ratio": current_hedge_ratio,
+        "liability_dv01": liability_dv01,
+        "current_hedge_portfolio_dv01": liability_dv01 * current_hedge_ratio,
+        "dv01_per_notional": 0.0005,
     }
 
 

@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from backend.models.effectiveness import HedgeEffectivenessAnalyzer
+from backend.models.glide_path import GlidePathAdvisor
 from backend.models.hedging import InterestRateSwap
 
 
@@ -100,6 +101,36 @@ class HedgeEffectivenessResponse(BaseModel):
     recommendation: str
 
 
+class GlidePathRequest(BaseModel):
+    """Request payload for glide path policy recommendation."""
+
+    funding_ratio: float = Field(..., example=0.92)
+    current_hedge_ratio: float = Field(..., example=0.68)
+    liability_dv01: float = Field(..., example=1_000_000.0)
+    current_hedge_portfolio_dv01: float = Field(..., example=680_000.0)
+    dv01_per_notional: float | None = Field(
+        None,
+        description="Optional DV01 per one dollar of hedge notional.",
+        example=0.0005,
+    )
+
+
+class GlidePathResponse(BaseModel):
+    """Response payload for glide path policy recommendation."""
+
+    funding_ratio: float
+    current_hedge_ratio: float
+    target_hedge_ratio: float
+    hedge_ratio_gap: float
+    current_hedge_portfolio_dv01: float
+    target_hedge_dv01: float
+    additional_dv01_needed: float
+    suggested_notional_change: float | None
+    recommended_action: str
+    policy_curve: list[dict[str, float]]
+    narrative: str
+
+
 @router.post("/swap-value", response_model=SwapValueResponse)
 def calculate_swap_value(request: SwapRequest) -> SwapValueResponse:
     """Calculate swap leg PVs, market value, and signed DV01."""
@@ -150,6 +181,24 @@ def calculate_hedge_effectiveness(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     return HedgeEffectivenessResponse(**metrics)
+
+
+@router.post("/glide-path", response_model=GlidePathResponse)
+def calculate_glide_path(request: GlidePathRequest) -> GlidePathResponse:
+    """Apply funded-status glide path policy to hedge allocation."""
+    try:
+        advisor = GlidePathAdvisor(
+            funding_ratio=request.funding_ratio,
+            current_hedge_ratio=request.current_hedge_ratio,
+            liability_dv01=request.liability_dv01,
+            current_hedge_portfolio_dv01=request.current_hedge_portfolio_dv01,
+            dv01_per_notional=request.dv01_per_notional,
+        )
+        recommendation = advisor.recommendation()
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return GlidePathResponse(**recommendation)
 
 
 def _build_interest_rate_swap(request: SwapRequest) -> InterestRateSwap:
