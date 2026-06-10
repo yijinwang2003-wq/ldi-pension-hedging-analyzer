@@ -56,6 +56,16 @@ Built with:
 - What-if funding-ratio sensitivity under +/-100bp shocks
 - Narrative recommendation for reaching a target hedge ratio
 
+### Multi-Instrument Hedge Optimizer
+
+- Starter hedge universe with 10Y/30Y swaps and 10Y/30Y Treasury bonds
+- Liability key-rate DV01 profile as the hedge target
+- Nonnegative instrument allocation optimization
+- Bucket-level residual KRD mismatch reporting
+- Single DV01 hedge versus multi-instrument KRD hedge comparison
+- Funding-ratio stress comparison across parallel and curve-twist scenarios
+- Client-report allocation, mismatch, stress, and recommendation summary
+
 ### Scenario Analysis
 
 - Vasicek short-rate model
@@ -120,10 +130,12 @@ ldi-pension-analyzer/
 │   ├── api/
 │   │   ├── liability.py
 │   │   ├── hedging.py
+│   │   ├── multi_hedge.py
 │   │   └── scenarios.py
 │   └── models/
 │       ├── liability.py
 │       ├── hedging.py
+│       ├── multi_hedge.py
 │       ├── scenarios.py
 │       └── portfolio.py
 ├── frontend/
@@ -134,9 +146,11 @@ ldi-pension-analyzer/
 │       ├── 2_Hedge_Optimizer.py      # IRS valuation, hedge notional, DV01 risk
 │       ├── 3_Scenario_Analysis.py    # Vasicek Monte Carlo, stress scenarios
 │       ├── 4_Funding_Status.py       # Growth/Hedging split, funding ratio, surplus
-│       └── 5_Client_Report.py        # PDF/CSV quarterly report generation
+│       ├── 5_Client_Report.py        # PDF/CSV quarterly report generation
+│       └── 6_Multi_Instrument_Hedge_Optimizer.py
 ├── tests/
 │   ├── test_liability.py
+│   ├── test_multi_hedge.py
 │   └── test_hedging.py
 ├── docker-compose.yml
 ├── requirements.txt
@@ -439,6 +453,78 @@ Response excerpt:
 }
 ```
 
+### Multi-Instrument Hedge Optimization
+
+```http
+POST /api/hedging/multi-instrument
+```
+
+Request:
+
+```json
+{
+  "liability_krd": {
+    "1Y": 50000,
+    "5Y": 150000,
+    "10Y": 400000,
+    "20Y": 350000,
+    "30Y": 250000
+  },
+  "selected_instruments": [
+    {
+      "name": "10Y Interest Rate Swap",
+      "type": "swap",
+      "notional": 1000000,
+      "dv01": -850,
+      "krd": {
+        "1Y": 0,
+        "5Y": -150,
+        "10Y": -500,
+        "20Y": -150,
+        "30Y": -50
+      }
+    }
+  ],
+  "asset_market_value": 100000000,
+  "liability_pv": 100000000
+}
+```
+
+If `selected_instruments` is omitted, the API uses the built-in starter
+universe: 10Y swap, 30Y swap, 10Y Treasury bond, and 30Y Treasury bond.
+
+Response excerpt:
+
+```json
+{
+  "recommended_allocations": [
+    {
+      "name": "30Y Interest Rate Swap",
+      "recommended_notional": 433734939.76,
+      "portfolio_dv01": -845783.13
+    }
+  ],
+  "hedge_ratio": 0.98,
+  "residual_krd": {
+    "1Y": 46626.51,
+    "5Y": 91756.02,
+    "10Y": 63554.22,
+    "20Y": -67771.08,
+    "30Y": -49698.80
+  },
+  "stress_results": {
+    "single_dv01_hedge": [],
+    "multi_instrument_krd_hedge": []
+  }
+}
+```
+
+Default universe endpoint:
+
+```http
+GET /api/hedging/multi-instrument/universe
+```
+
 ### Nelson-Siegel Curve Builder
 
 ```http
@@ -666,6 +752,27 @@ backend/models/effectiveness.py
 Reports hedge ratio, residual DV01, target hedge gap, +/-100bp funding-ratio
 sensitivity, and an interview-friendly hedge recommendation.
 
+### MultiInstrumentHedgeOptimizer
+
+Located in:
+
+```text
+backend/models/multi_hedge.py
+```
+
+The optimizer moves the project from single-instrument DV01 hedging to a
+multi-instrument KRD allocation engine. Liability KRD is positive. Hedge
+instrument KRD is typically negative. The objective is:
+
+```text
+minimize sum((portfolio_krd_bucket + liability_krd_bucket)^2)
+```
+
+The model solves nonnegative instrument multipliers. SciPy can be enabled with
+`LDI_USE_SCIPY_OPTIMIZER=1`; otherwise a NumPy active-set least-squares fallback
+is used. Outputs include recommended notional, hedge ratio, residual KRD by
+bucket, residual risk score, single-DV01 comparison, and stress-test results.
+
 ### FundingAttribution
 
 Located in:
@@ -779,6 +886,23 @@ Features:
 - Generates downloadable PDF client report
 - Includes portfolio allocation, branded executive summary, metric table, interpretation, charts, and methodology
 - Includes period-over-period funding-ratio attribution in CSV and PDF downloads
+- Includes multi-instrument hedge allocation, KRD mismatch, stress comparison, and recommendation
+
+### Multi-Instrument Hedge Optimizer
+
+```text
+frontend/pages/6_Multi_Instrument_Hedge_Optimizer.py
+```
+
+Features:
+
+- Editable liability KRD profile
+- Editable hedge instrument universe with include/exclude controls
+- Optimized allocation table
+- Liability versus hedge KRD chart
+- Residual KRD chart
+- Single DV01 hedge versus multi-instrument KRD stress comparison
+- Narrative recommendation summary
 
 ---
 
@@ -843,6 +967,10 @@ Current test coverage includes:
 - Nelson-Siegel fitting and rate formula
 - Funding attribution bridge
 - Vasicek simulation shape, summary validation, and shift scenarios
+- Multi-instrument KRD optimization convergence
+- Residual KRD improvement versus unhedged exposure
+- Multi-instrument hedge outperformance versus single DV01 hedge
+- Multi-hedge stress scenario calculations
 
 ---
 
@@ -855,6 +983,9 @@ Current test coverage includes:
 - Curve twist shocks are entered in basis points and applied directly to matching maturity buckets.
 - Hedge DV01 is modeled as positive liability-hedging exposure: it gains when rates fall and loses when rates rise.
 - Hedge key-rate DV01 can be supplied when a maturity-bucket hedge profile is available.
+- Multi-instrument hedge instruments use negative DV01/KRD to offset positive liability DV01/KRD.
+- Multi-hedge allocation multipliers are constrained to be nonnegative.
+- Single-DV01 comparison uses the selected instrument with the largest absolute DV01.
 - Nelson-Siegel fitting uses NumPy least squares and a simple tau grid search when tau is not fixed.
 - Funding attribution is a reporting bridge, not a full actuarial roll-forward.
 - Interest-rate swap payments are annual.
@@ -882,6 +1013,9 @@ Potential next improvements:
   and reporting attribution into modular model classes.
 - Key-rate DV01 and curve twists show that LDI risk is not only about parallel
   duration; curve shape matters for long pension cash flows.
+- The multi-instrument optimizer shows why matching only total DV01 can leave
+  material curve risk when liabilities are concentrated in different maturity
+  buckets than the hedge asset.
 - Hedge effectiveness is reported as a DV01 coverage ratio plus residual DV01,
   which is the language used in pension risk dashboards.
 - Funding-ratio attribution translates market moves into sponsor-level outcomes:
@@ -899,6 +1033,13 @@ offsets. Curve twist scenarios help identify whether the hedge is concentrated
 in the wrong maturity buckets. Attribution then explains whether funding-ratio
 movement came from growth assets, liability discount rates, hedge performance,
 cash flows, or unexplained residuals.
+
+The multi-instrument optimizer extends that workflow by allocating across
+multiple hedge instruments instead of assuming a single swap can solve the
+problem. A single 10Y swap can match total DV01 while leaving 20Y-30Y exposure
+unhedged. A KRD optimizer can use both intermediate and long-duration
+instruments to reduce residual curve risk and improve funding-ratio stability
+under steepening and flattening shocks.
 
 ---
 

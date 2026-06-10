@@ -309,6 +309,14 @@ def generate_client_report(
             "reporting/funding-attribution",
             attribution_inputs,
         )
+        multi_hedge = post_api_json(
+            API_BASE_URL,
+            "hedging/multi-instrument",
+            default_multi_hedge_payload(
+                asset_market_value=asset_market_value,
+                liability_pv=liability_pv,
+            ),
+        )
     except requests.RequestException as exc:
         st.error(render_backend_error("generate client report", exc))
         return
@@ -332,10 +340,22 @@ def generate_client_report(
         "macaulay_duration": duration["macaulay_duration"],
         "modified_duration": duration["modified_duration"],
         **prefix_keys(attribution, "attribution"),
+        "multi_hedge_recommendation": multi_hedge["recommendation"],
+        "multi_hedge_hedge_ratio": multi_hedge["hedge_ratio"],
+        "multi_hedge_residual_risk_score": multi_hedge["comparison"][
+            "multi_instrument_krd_hedge"
+        ]["residual_risk_score"],
+        "single_hedge_residual_risk_score": multi_hedge["comparison"][
+            "single_dv01_hedge"
+        ]["residual_risk_score"],
+        "multi_hedge_allocations": multi_hedge["recommended_allocations"],
+        "multi_hedge_residual_krd": multi_hedge["residual_krd"],
+        "multi_hedge_stress_results": multi_hedge["stress_results"],
     }
 
     render_metrics(report_data)
     render_attribution_summary(report_data)
+    render_multi_hedge_summary(report_data)
     render_visualization(report_data)
     render_downloads(report_data)
 
@@ -431,6 +451,40 @@ def render_attribution_summary(report_data: dict[str, float | str]) -> None:
 
     attribution_df = build_attribution_dataframe(report_data)
     st.dataframe(attribution_df, use_container_width=True, hide_index=True)
+
+
+def render_multi_hedge_summary(report_data: dict[str, object]) -> None:
+    """Render multi-instrument hedge recommendation in the client report page."""
+    st.subheader("Multi-Instrument Hedge Recommendation")
+    columns = st.columns(3)
+    columns[0].metric(
+        "Optimized Hedge Ratio",
+        f"{float(report_data['multi_hedge_hedge_ratio']):.0%}",
+    )
+    columns[1].metric(
+        "Single Hedge Residual Score",
+        f"{float(report_data['single_hedge_residual_risk_score']):,.0f}",
+    )
+    columns[2].metric(
+        "KRD Hedge Residual Score",
+        f"{float(report_data['multi_hedge_residual_risk_score']):,.0f}",
+    )
+    st.info(str(report_data["multi_hedge_recommendation"]))
+    st.dataframe(
+        build_multi_hedge_allocation_dataframe(report_data),
+        use_container_width=True,
+        hide_index=True,
+    )
+    st.dataframe(
+        build_multi_hedge_residual_dataframe(report_data),
+        use_container_width=True,
+        hide_index=True,
+    )
+    st.dataframe(
+        build_multi_hedge_stress_dataframe(report_data),
+        use_container_width=True,
+        hide_index=True,
+    )
 
 
 def render_downloads(report_data: dict[str, float | str]) -> None:
@@ -554,6 +608,48 @@ def create_pdf_report(report_data: dict[str, float | str]) -> bytes:
     elements.append(allocation_table)
     elements.append(Spacer(1, 12))
 
+    residual_rows = [["Bucket", "Residual KRD"]]
+    for row in build_multi_hedge_residual_dataframe(report_data).itertuples(index=False):
+        residual_rows.append([row.Bucket, format_currency(float(row.Residual_KRD))])
+    residual_table = Table(residual_rows)
+    residual_table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
+                ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("ALIGN", (1, 1), (-1, -1), "RIGHT"),
+                ("PADDING", (0, 0), (-1, -1), 6),
+            ]
+        )
+    )
+    elements.append(residual_table)
+    elements.append(Spacer(1, 12))
+
+    stress_rows = [["Approach", "Scenario", "Funding Ratio Change"]]
+    for row in build_multi_hedge_stress_dataframe(report_data).itertuples(index=False):
+        stress_rows.append(
+            [
+                row.Approach,
+                row.Scenario,
+                f"{float(row.Funding_Ratio_Change):.2%}",
+            ]
+        )
+    stress_table = Table(stress_rows)
+    stress_table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
+                ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("ALIGN", (2, 1), (-1, -1), "RIGHT"),
+                ("PADDING", (0, 0), (-1, -1), 6),
+            ]
+        )
+    )
+    elements.append(stress_table)
+    elements.append(Spacer(1, 12))
+
     elements.append(Paragraph("Funding Ratio Attribution", styles["Heading2"]))
     attribution_rows = [["Driver", "Funding Ratio Contribution"]]
     for row in build_attribution_dataframe(report_data).itertuples(index=False):
@@ -571,6 +667,33 @@ def create_pdf_report(report_data: dict[str, float | str]) -> bytes:
         )
     )
     elements.append(attribution_table)
+    elements.append(Spacer(1, 12))
+
+    elements.append(Paragraph("Multi-Instrument Hedge Recommendation", styles["Heading2"]))
+    elements.append(Paragraph(str(report_data["multi_hedge_recommendation"]), styles["Normal"]))
+    elements.append(Spacer(1, 8))
+    allocation_rows = [["Instrument", "Recommended Notional", "Portfolio DV01"]]
+    for row in build_multi_hedge_allocation_dataframe(report_data).itertuples(index=False):
+        allocation_rows.append(
+            [
+                row.Instrument,
+                format_currency(float(row.Notional)),
+                format_currency(float(row.DV01)),
+            ]
+        )
+    allocation_table = Table(allocation_rows)
+    allocation_table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
+                ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("ALIGN", (1, 1), (-1, -1), "RIGHT"),
+                ("PADDING", (0, 0), (-1, -1), 6),
+            ]
+        )
+    )
+    elements.append(allocation_table)
     elements.append(Spacer(1, 12))
 
     elements.append(Paragraph("Interpretation", styles["Heading2"]))
@@ -744,6 +867,69 @@ def build_attribution_dataframe(report_data: dict[str, float | str]) -> pd.DataF
             ],
         }
     )
+
+
+def build_multi_hedge_allocation_dataframe(report_data: dict[str, object]) -> pd.DataFrame:
+    """Return nonzero recommended multi-hedge allocations for reporting."""
+    allocations = list(report_data["multi_hedge_allocations"])
+    rows = [
+        {
+            "Instrument": allocation["name"],
+            "Notional": float(allocation["recommended_notional"]),
+            "DV01": float(allocation["portfolio_dv01"]),
+        }
+        for allocation in allocations
+        if abs(float(allocation["recommended_notional"])) > 1.0
+    ]
+    return pd.DataFrame(rows)
+
+
+def build_multi_hedge_residual_dataframe(report_data: dict[str, object]) -> pd.DataFrame:
+    """Return residual KRD by bucket for reporting."""
+    residual_krd = dict(report_data["multi_hedge_residual_krd"])
+    return pd.DataFrame(
+        {
+            "Bucket": list(residual_krd.keys()),
+            "Residual_KRD": [float(value) for value in residual_krd.values()],
+        }
+    )
+
+
+def build_multi_hedge_stress_dataframe(report_data: dict[str, object]) -> pd.DataFrame:
+    """Return single-vs-multi stress comparison for reporting."""
+    stress_results = dict(report_data["multi_hedge_stress_results"])
+    rows = []
+    for approach_key, approach_label in (
+        ("single_dv01_hedge", "Single DV01 Hedge"),
+        ("multi_instrument_krd_hedge", "Multi-Instrument KRD Hedge"),
+    ):
+        for row in stress_results[approach_key]:
+            rows.append(
+                {
+                    "Approach": approach_label,
+                    "Scenario": row["scenario"],
+                    "Funding_Ratio_Change": float(row["funding_ratio_change"]),
+                }
+            )
+    return pd.DataFrame(rows)
+
+
+def default_multi_hedge_payload(
+    asset_market_value: float,
+    liability_pv: float,
+) -> dict[str, object]:
+    """Return report-ready default KRD optimization inputs."""
+    return {
+        "liability_krd": {
+            "1Y": 50_000.0,
+            "5Y": 150_000.0,
+            "10Y": 400_000.0,
+            "20Y": 350_000.0,
+            "30Y": 250_000.0,
+        },
+        "asset_market_value": asset_market_value,
+        "liability_pv": liability_pv,
+    }
 
 
 def prefix_keys(data: dict[str, float], prefix: str) -> dict[str, float]:
