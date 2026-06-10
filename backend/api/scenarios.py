@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
+from backend.models.curve import CurveScenario, CurveScenarioAnalyzer, NelsonSiegelCurve
 from backend.models.scenarios import VasicekModel
 
 
@@ -35,6 +36,79 @@ class VasicekResponse(BaseModel):
     summary: dict[str, float]
 
 
+class CurveTwistRequest(BaseModel):
+    """Request payload for curve twist scenario analytics."""
+
+    cash_flows: dict[int, float] = Field(
+        ...,
+        description="Projected pension payments by year.",
+        example={1: 1_000_000.0, 5: 1_250_000.0, 10: 1_500_000.0},
+    )
+    discount_curve: dict[int, float] = Field(
+        ...,
+        description="Annual spot discount rates by year, expressed as decimals.",
+        example={1: 0.04, 5: 0.043, 10: 0.047},
+    )
+    asset_market_value: float = Field(
+        ...,
+        description="Total plan asset market value.",
+        example=4_800_000.0,
+    )
+    hedge_dv01: float = Field(
+        0.0,
+        description="Hedge portfolio DV01 used when key-rate hedge DV01 is absent.",
+        example=3_000.0,
+    )
+    hedge_key_rate_dv01: dict[int, float] | None = Field(
+        None,
+        description="Optional hedge DV01 by maturity bucket.",
+        example={1: 200.0, 5: 1_000.0, 10: 1_800.0},
+    )
+    custom_shocks_bps: dict[int, float] | None = Field(
+        None,
+        description="Optional custom key-rate shocks in basis points.",
+        example={1: -25.0, 5: 50.0, 10: 90.0},
+    )
+
+
+class CurveTwistResponse(BaseModel):
+    """Response payload for curve twist scenario analytics."""
+
+    results: list[dict[str, float | str | dict[int, float]]]
+
+
+class NelsonSiegelRequest(BaseModel):
+    """Request payload for Nelson-Siegel curve fitting."""
+
+    maturities: list[float] = Field(
+        ...,
+        description="Market maturity points in years.",
+        example=[1.0, 2.0, 5.0, 10.0, 30.0],
+    )
+    rates: list[float] = Field(
+        ...,
+        description="Market spot rates, expressed as decimals.",
+        example=[0.038, 0.039, 0.041, 0.044, 0.047],
+    )
+    tau: float | None = Field(
+        None,
+        description="Optional fixed Nelson-Siegel tau.",
+        example=2.5,
+    )
+    output_years: list[int] = Field(
+        ...,
+        description="Annual maturities to generate.",
+        example=[1, 2, 3, 4, 5, 10, 20, 30],
+    )
+
+
+class NelsonSiegelResponse(BaseModel):
+    """Response payload for Nelson-Siegel curve fitting."""
+
+    parameters: dict[str, float]
+    discount_curve: dict[int, float]
+
+
 @router.post("/vasicek", response_model=VasicekResponse)
 def simulate_vasicek(request: VasicekRequest) -> VasicekResponse:
     """Simulate Vasicek short-rate paths and summarize terminal rates."""
@@ -58,4 +132,47 @@ def simulate_vasicek(request: VasicekRequest) -> VasicekResponse:
         paths=paths.tolist(),
         terminal_rates=paths[:, -1].tolist(),
         summary=summary,
+    )
+
+
+@router.post("/curve-twists", response_model=CurveTwistResponse)
+def analyze_curve_twists(request: CurveTwistRequest) -> CurveTwistResponse:
+    """Analyze liability and funding sensitivity under curve-shape shocks."""
+    try:
+        analyzer = CurveScenarioAnalyzer(
+            cash_flows=request.cash_flows,
+            discount_curve=request.discount_curve,
+            asset_market_value=request.asset_market_value,
+            hedge_dv01=request.hedge_dv01,
+            hedge_key_rate_dv01=request.hedge_key_rate_dv01,
+        )
+        custom_scenario = (
+            CurveScenario("Custom key-rate shock", request.custom_shocks_bps)
+            if request.custom_shocks_bps
+            else None
+        )
+        results = analyzer.analyze(custom_scenario=custom_scenario)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return CurveTwistResponse(results=results)
+
+
+@router.post("/nelson-siegel", response_model=NelsonSiegelResponse)
+def fit_nelson_siegel(request: NelsonSiegelRequest) -> NelsonSiegelResponse:
+    """Fit a Nelson-Siegel curve and generate a smooth annual spot curve."""
+    try:
+        curve = NelsonSiegelCurve(
+            maturities=request.maturities,
+            rates=request.rates,
+            tau=request.tau,
+        )
+        parameters = curve.fit()
+        discount_curve = curve.generate_curve(request.output_years)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return NelsonSiegelResponse(
+        parameters=parameters,
+        discount_curve=discount_curve,
     )

@@ -6,6 +6,7 @@ from fastapi import FastAPI
 
 from backend.api.hedging import router as hedging_router
 from backend.api.liability import router as liability_router
+from backend.api.reporting import router as reporting_router
 from backend.api.scenarios import router as scenarios_router
 
 
@@ -21,6 +22,7 @@ app = FastAPI(
 app.include_router(liability_router, prefix="/api")
 app.include_router(hedging_router, prefix="/api")
 app.include_router(scenarios_router, prefix="/api")
+app.include_router(reporting_router, prefix="/api")
 
 
 @app.get("/")

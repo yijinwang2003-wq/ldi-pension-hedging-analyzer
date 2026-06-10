@@ -119,6 +119,30 @@ class LiabilityModel:
             for year, cash_flow in self.cash_flows.items()
         )
 
+    def pv_under_curve_shock(self, shocks_bps: dict[int, float]) -> float:
+        """Return present value after applying maturity-specific rate shocks.
+
+        Missing shock maturities are treated as zero shocks. Extra shock
+        maturities are ignored when no cash flow uses that maturity.
+        """
+        shifted_curve = self.shocked_discount_curve(shocks_bps)
+        return self._present_value_with_curve(shifted_curve)
+
+    def shocked_discount_curve(self, shocks_bps: dict[int, float]) -> dict[int, float]:
+        """Return a discount curve shifted by maturity-specific basis points."""
+        if not isinstance(shocks_bps, dict):
+            raise TypeError("shocks_bps must be a dictionary.")
+
+        shifted_curve = dict(self.discount_curve)
+        for year, shock_bps in shocks_bps.items():
+            self._validate_year(year, field_name="shocks_bps")
+            if not isinstance(shock_bps, (int, float)):
+                raise TypeError("Shock amounts must be numeric.")
+            if year in shifted_curve:
+                shifted_curve[year] += shock_bps * self.BASIS_POINT
+
+        return shifted_curve
+
     def key_rate_dv01(self, key_rates: list[int]) -> dict[int, float]:
         """Return key-rate DV01 for selected maturity points.
 

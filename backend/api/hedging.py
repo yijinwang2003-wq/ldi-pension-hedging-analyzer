@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
+from backend.models.effectiveness import HedgeEffectivenessAnalyzer
 from backend.models.hedging import InterestRateSwap
 
 
@@ -55,6 +56,50 @@ class HedgeNotionalResponse(BaseModel):
     hedge_notional: float
 
 
+class HedgeEffectivenessRequest(BaseModel):
+    """Request payload for hedge effectiveness reporting."""
+
+    liability_dv01: float = Field(..., description="Liability DV01.", example=5_000.0)
+    hedge_dv01: float = Field(
+        ...,
+        description="Hedging portfolio DV01.",
+        example=3_900.0,
+    )
+    asset_market_value: float = Field(
+        ...,
+        description="Total plan asset market value.",
+        example=5_200_000.0,
+    )
+    liability_pv: float = Field(
+        ...,
+        description="Present value of plan liabilities.",
+        example=5_600_000.0,
+    )
+    target_hedge_ratio: float = Field(
+        0.90,
+        description="Target DV01 hedge ratio.",
+        example=0.90,
+    )
+    swap_dv01_per_notional: float | None = Field(
+        None,
+        description="Optional swap DV01 per one dollar of notional.",
+        example=0.00045,
+    )
+
+
+class HedgeEffectivenessResponse(BaseModel):
+    """Response payload for hedge effectiveness reporting."""
+
+    hedge_ratio: float
+    percent_hedged: float
+    residual_dv01: float
+    target_hedge_ratio: float
+    required_incremental_dv01: float
+    required_incremental_notional: float | None
+    funding_ratio_sensitivity: dict[str, dict[str, float]]
+    recommendation: str
+
+
 @router.post("/swap-value", response_model=SwapValueResponse)
 def calculate_swap_value(request: SwapRequest) -> SwapValueResponse:
     """Calculate swap leg PVs, market value, and signed DV01."""
@@ -84,6 +129,27 @@ def calculate_hedge_notional(
         swap_dv01=swap_dv01,
         hedge_notional=hedge_notional,
     )
+
+
+@router.post("/effectiveness", response_model=HedgeEffectivenessResponse)
+def calculate_hedge_effectiveness(
+    request: HedgeEffectivenessRequest,
+) -> HedgeEffectivenessResponse:
+    """Calculate hedge ratio, residual DV01, and funding-ratio sensitivity."""
+    try:
+        analyzer = HedgeEffectivenessAnalyzer(
+            liability_dv01=request.liability_dv01,
+            hedge_dv01=request.hedge_dv01,
+            asset_market_value=request.asset_market_value,
+            liability_pv=request.liability_pv,
+            target_hedge_ratio=request.target_hedge_ratio,
+            swap_dv01_per_notional=request.swap_dv01_per_notional,
+        )
+        metrics = analyzer.metrics()
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return HedgeEffectivenessResponse(**metrics)
 
 
 def _build_interest_rate_swap(request: SwapRequest) -> InterestRateSwap:
