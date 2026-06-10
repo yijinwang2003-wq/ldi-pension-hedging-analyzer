@@ -41,6 +41,7 @@ Built with:
 - Modified Duration
 - Parallel DV01
 - Key-rate DV01 by maturity bucket
+- Maturity-specific curve shock valuation
 - Hedge maturity suggestion
 
 ### Hedge Optimizer
@@ -51,6 +52,9 @@ Built with:
 - Signed Swap DV01 calculation
 - Hedge notional estimation
 - Before/after hedge DV01 risk visualization
+- Hedge ratio, residual DV01, and percent hedged
+- What-if funding-ratio sensitivity under +/-100bp shocks
+- Narrative recommendation for reaching a target hedge ratio
 
 ### Scenario Analysis
 
@@ -61,6 +65,9 @@ Built with:
 - Terminal rate distribution
 - Summary statistics for terminal rates
 - Parallel shift stress scenarios
+- Curve twist scenarios: Parallel +100bp, Parallel -100bp, Bear Steepener, Bull Flattener
+- Optional custom key-rate shocks
+- Nelson-Siegel curve fitting and smooth annual curve generation
 
 ### Funding Status
 
@@ -69,6 +76,7 @@ Built with:
 - Funding ratio calculation
 - Surplus / deficit monitoring
 - Asset-vs-liability visualization
+- Period-over-period funding-ratio attribution
 
 ### Client Report
 
@@ -77,6 +85,7 @@ Built with:
 - Executive summary generation
 - Growth/Hedging portfolio allocation reporting
 - Funding status charts
+- Asset return, liability discount-rate, cash-flow, hedge, and residual attribution
 - Methodology section
 
 ---
@@ -365,6 +374,126 @@ Response:
 }
 ```
 
+### Curve Twist Scenarios
+
+```http
+POST /api/scenarios/curve-twists
+```
+
+Request:
+
+```json
+{
+  "cash_flows": {
+    "1": 1000000,
+    "5": 1250000,
+    "10": 1500000
+  },
+  "discount_curve": {
+    "1": 0.04,
+    "5": 0.043,
+    "10": 0.047
+  },
+  "asset_market_value": 3600000,
+  "hedge_dv01": 2000,
+  "custom_shocks_bps": {
+    "1": 0,
+    "5": 50,
+    "10": 100
+  }
+}
+```
+
+Response excerpt:
+
+```json
+{
+  "results": [
+    {
+      "scenario": "Parallel +100bp",
+      "liability_pv_change": -253118.27,
+      "hedge_impact": -200000,
+      "funding_ratio_change_unhedged": 0.0834,
+      "funding_ratio_change_hedged": 0.0216
+    }
+  ]
+}
+```
+
+### Hedge Effectiveness
+
+```http
+POST /api/hedging/effectiveness
+```
+
+Response excerpt:
+
+```json
+{
+  "hedge_ratio": 0.78,
+  "percent_hedged": 0.78,
+  "residual_dv01": 1100,
+  "required_incremental_dv01": 600,
+  "required_incremental_notional": 1200000,
+  "recommendation": "Current hedge ratio is 78%. To reach 90%, increase IRS notional by approximately $1,200,000.00."
+}
+```
+
+### Nelson-Siegel Curve Builder
+
+```http
+POST /api/scenarios/nelson-siegel
+```
+
+Request:
+
+```json
+{
+  "maturities": [1, 2, 5, 10, 30],
+  "rates": [0.038, 0.039, 0.041, 0.044, 0.047],
+  "tau": 2.5,
+  "output_years": [1, 2, 3, 4, 5, 10, 20, 30]
+}
+```
+
+Response:
+
+```json
+{
+  "parameters": {
+    "beta0": 0.0491,
+    "beta1": -0.0123,
+    "beta2": 0.0034,
+    "tau": 2.5
+  },
+  "discount_curve": {
+    "1": 0.0381,
+    "2": 0.0390,
+    "3": 0.0398
+  }
+}
+```
+
+### Funding Attribution
+
+```http
+POST /api/reporting/funding-attribution
+```
+
+Response excerpt:
+
+```json
+{
+  "beginning_funding_ratio": 0.9091,
+  "ending_funding_ratio": 0.9292,
+  "asset_return_contribution": 0.0409,
+  "liability_discount_rate_contribution": -0.0207,
+  "cash_flow_contribution": 0.0182,
+  "hedge_contribution": 0.0136,
+  "residual_contribution": -0.0320
+}
+```
+
 ---
 
 ## Quant Models
@@ -389,6 +518,7 @@ Methods:
 - `modified_duration()`
 - `dv01()`
 - `pv_under_parallel_shift(shift_bps)`
+- `pv_under_curve_shock(shocks_bps)`
 
 Valuation uses annual compounding:
 
@@ -495,6 +625,65 @@ Euler-Maruyama discretization:
 r[t+1] = r[t] + kappa * (theta - r[t]) * dt + sigma * sqrt(dt) * Z
 ```
 
+### CurveScenarioAnalyzer
+
+Located in:
+
+```text
+backend/models/curve.py
+```
+
+The analyzer runs standard curve-shape scenarios plus an optional custom
+key-rate shock. Liability PV is revalued exactly against the shocked curve.
+Hedge impact is estimated from hedge DV01 or hedge key-rate DV01.
+
+### NelsonSiegelCurve
+
+Located in:
+
+```text
+backend/models/curve.py
+```
+
+The Nelson-Siegel implementation accepts market maturity/rate points, fits
+`beta0`, `beta1`, `beta2`, and either a fixed or grid-searched `tau`, then
+generates a smooth annual spot curve:
+
+```text
+r(t) = beta0
+     + beta1 * (1 - exp(-t / tau)) / (t / tau)
+     + beta2 * ((1 - exp(-t / tau)) / (t / tau) - exp(-t / tau))
+```
+
+### HedgeEffectivenessAnalyzer
+
+Located in:
+
+```text
+backend/models/effectiveness.py
+```
+
+Reports hedge ratio, residual DV01, target hedge gap, +/-100bp funding-ratio
+sensitivity, and an interview-friendly hedge recommendation.
+
+### FundingAttribution
+
+Located in:
+
+```text
+backend/models/attribution.py
+```
+
+Builds a funding-ratio bridge from beginning to ending status:
+
+```text
+Total change = asset return
+             + liability discount-rate effect
+             + cash-flow / benefit-payment effect
+             + hedge contribution
+             + residual
+```
+
 ---
 
 ## Frontend Pages
@@ -538,6 +727,7 @@ Features:
 - Computes signed Swap DV01
 - Computes required hedge notional
 - Plots before/after hedge DV01 risk
+- Shows hedge effectiveness summary, residual DV01, +/-100bp sensitivity, and target-hedge recommendation
 
 ### Scenario Analysis
 
@@ -552,6 +742,8 @@ Features:
 - Sample path chart
 - Terminal rate histogram
 - Mean, standard deviation, 5%, median, and 95% terminal-rate metrics
+- Curve Twist Scenarios section with hedged vs unhedged funding-ratio comparison
+- Nelson-Siegel Curve Builder section with fitted parameters, chart, and generated curve table
 
 ### Funding Status
 
@@ -568,6 +760,7 @@ Features:
 - Calls FastAPI liability PV and DV01 endpoints
 - Computes Liability PV, Funding Ratio, Surplus / Deficit, and Liability DV01
 - Shows Growth/Hedging allocation attribution
+- Shows period-over-period attribution report
 - Color-coded Funding Ratio metric
 - Asset-versus-liability, surplus/deficit, and portfolio allocation charts
 
@@ -585,6 +778,7 @@ Features:
 - Generates downloadable CSV summary
 - Generates downloadable PDF client report
 - Includes portfolio allocation, branded executive summary, metric table, interpretation, charts, and methodology
+- Includes period-over-period funding-ratio attribution in CSV and PDF downloads
 
 ---
 
@@ -644,6 +838,11 @@ Current test coverage includes:
 - Signed swap DV01 non-zero check
 - Hedge notional direction
 - Swap input validation
+- Curve twist scenario calculations
+- Hedge effectiveness metrics and funding-ratio sensitivity
+- Nelson-Siegel fitting and rate formula
+- Funding attribution bridge
+- Vasicek simulation shape, summary validation, and shift scenarios
 
 ---
 
@@ -653,6 +852,11 @@ Current test coverage includes:
 - Pension cash-flow years are interpreted as annual periods from valuation date.
 - Discount curves are represented as year-to-rate dictionaries.
 - Liability cash flows must be non-negative.
+- Curve twist shocks are entered in basis points and applied directly to matching maturity buckets.
+- Hedge DV01 is modeled as positive liability-hedging exposure: it gains when rates fall and loses when rates rise.
+- Hedge key-rate DV01 can be supplied when a maturity-bucket hedge profile is available.
+- Nelson-Siegel fitting uses NumPy least squares and a simple tau grid search when tau is not fixed.
+- Funding attribution is a reporting bridge, not a full actuarial roll-forward.
 - Interest-rate swap payments are annual.
 - The swap floating leg uses a simplified par floating-leg approximation.
 - Vasicek paths are simulated with Euler-Maruyama discretization.
@@ -664,14 +868,37 @@ Current test coverage includes:
 
 Potential next improvements:
 
-- Add richer hedge and scenario API outputs for production-style workflows.
-- Add tests for the Vasicek model.
+- Add end-to-end tests for the Streamlit flows.
 - Add end-to-end tests for FastAPI routes.
 - Support user-entered swap discount curves in the Hedge Optimizer.
-- Add key-rate duration and curve twist scenarios.
-- Add asset portfolio modeling and hedge effectiveness reporting.
 - Add CSV upload/export for liability cash flows.
 - Add cloud deployment configuration for a hosted demo.
+
+---
+
+## Interview Talking Points
+
+- The project separates liability valuation, hedge construction, curve scenarios,
+  and reporting attribution into modular model classes.
+- Key-rate DV01 and curve twists show that LDI risk is not only about parallel
+  duration; curve shape matters for long pension cash flows.
+- Hedge effectiveness is reported as a DV01 coverage ratio plus residual DV01,
+  which is the language used in pension risk dashboards.
+- Funding-ratio attribution translates market moves into sponsor-level outcomes:
+  asset return, liability discount-rate movement, benefit payments, hedge P&L,
+  and residual.
+- Nelson-Siegel fitting demonstrates how market curve points can become a smooth
+  discount curve while preserving manual curve input as a fallback.
+
+## Real-World LDI Connection
+
+In practice, pension sponsors hedge funded-status volatility rather than asset
+volatility alone. A long-duration liability rises when rates fall, so a hedging
+portfolio of long bonds and swaps is evaluated by how much liability DV01 it
+offsets. Curve twist scenarios help identify whether the hedge is concentrated
+in the wrong maturity buckets. Attribution then explains whether funding-ratio
+movement came from growth assets, liability discount rates, hedge performance,
+cash flows, or unexplained residuals.
 
 ---
 
